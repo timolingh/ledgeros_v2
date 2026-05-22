@@ -94,5 +94,5 @@ This epic delivers the fundamental accounting controls required by the MVP. With
 - No external business-layer integration required for MVP
 
 ## Approval
-- Status: **Pending**
+- Status: Approved
 - Approval required before any code is built against this epic.
