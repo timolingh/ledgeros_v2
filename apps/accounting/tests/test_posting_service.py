@@ -4,7 +4,7 @@ import pytest
 from django.core.exceptions import ValidationError
 
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, JournalEntry
-from apps.accounting.services import JournalLineInput, create_accounting_period, create_and_post_journal_entry, create_draft_journal_entry, post_journal_entry
+from apps.accounting.services import JournalLineInput, create_accounting_period, create_and_post_journal_entry, create_draft_journal_entry, post_journal_entry, update_draft_journal_entry
 from apps.accounting.services.chart_import import import_chart_of_accounts
 from apps.accounting.services.entities import get_default_entity
 
@@ -47,6 +47,70 @@ def test_draft_does_not_affect_balances(coa):
     )
     assert draft.status == JournalEntry.Status.DRAFT
     assert Account.objects.get(account_code="1000").posted_balance() == 0
+
+
+@pytest.mark.django_db
+def test_draft_entries_may_be_edited(coa):
+    create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    draft = create_draft_journal_entry(
+        entry_date=date(2026, 5, 1),
+        description="Draft cash sale",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+
+    updated = update_draft_journal_entry(
+        entry=draft,
+        description="Updated draft cash sale",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="120.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="120.00"),
+        ],
+    )
+    updated.refresh_from_db()
+
+    assert updated.status == JournalEntry.Status.DRAFT
+    assert updated.description == "Updated draft cash sale"
+    assert updated.total_debits == updated.total_credits == 120
+    assert AuditLog.objects.filter(action="journal_entry_updated", record_id=str(updated.pk)).exists()
+
+
+@pytest.mark.django_db
+def test_posted_entries_cannot_be_edited(coa):
+    create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    entry = create_and_post_journal_entry(
+        entry_date=date(2026, 5, 1),
+        description="Cash sale",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+
+    with pytest.raises(ValidationError):
+        update_draft_journal_entry(entry=entry, description="Should fail")
+
+
+@pytest.mark.django_db
+def test_reversed_entries_cannot_be_edited(coa):
+    create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    draft = create_draft_journal_entry(
+        entry_date=date(2026, 5, 1),
+        description="Cash sale",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+    post_journal_entry(entry=draft)
+    draft.refresh_from_db()
+    draft.status = JournalEntry.Status.REVERSED
+    draft.save(update_fields=["status", "updated_at"])
+
+    with pytest.raises(ValidationError):
+        update_draft_journal_entry(entry=draft, description="Should fail")
 
 
 @pytest.mark.django_db
