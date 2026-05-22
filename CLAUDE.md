@@ -26,3 +26,20 @@ Goal-driven execution:
   - expected tenant ledger entries
   - expected report totals
 - Write or update tests before implementation when behavior changes.
+
+## Anti-Slop Engineering Principles
+
+1. **Run the code, not just the generator.**  
+   Generated code is not complete until the relevant runtime checks pass. For Django work, at minimum run `python manage.py check`, `python manage.py makemigrations --check --dry-run`, migrations, relevant management commands, and tests before claiming the task is done.
+
+2. **Preserve domain invariants in executable tests.**  
+   Any business rule described in the PRD or epic must have a corresponding test. For accounting, this includes balanced journal entries, closed-period posting rejection, draft exclusion from balances, reversal behavior, audit-log creation, and immutability of posted entries.
+
+3. **Do not bypass the service layer for state-changing operations.**  
+   Views, serializers, admin actions, management commands, and future integrations must call domain services for mutations. They must not directly change critical fields such as journal status, period status, posted timestamps, reversal links, or audit records.
+
+4. **Avoid polished scaffolds that are not wired together.**  
+   New files must be internally consistent across imports, model fields, admin config, serializers, migrations, URLs, tests, and commands. If a symbol is referenced, it must exist. If a field is renamed, every caller must be updated. No handoff should rely on the user discovering integration errors.
+
+5. **Separate implemented scope from future scope.**  
+   Follow the approved epic/PRD boundary. Do not implement later-epic features early just because they are easy to scaffold. If a future hook is needed, keep it minimal, documented, and covered by tests without pretending the later feature is complete.
