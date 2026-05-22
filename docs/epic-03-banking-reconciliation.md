@@ -11,6 +11,7 @@ Add basic banking and bank reconciliation support so LedgerOS can manage cash mo
 - Bank reconciliation workflow
 - Reconciliation status tracking
 - Cash basis support for banking transactions
+- Dockerized runtime for banking and reconciliation workflows in local development, testing, and deployment
 
 ## Why this epic exists
 Reliable cash accounting is required for SMB accounting and is a core part of the MVP scope. Reconciliation closes the gap between accounting records and real bank activity.
@@ -26,6 +27,7 @@ Reliable cash accounting is required for SMB accounting and is a core part of th
 
 ## Implementation Notes
 - Implementation must use Python/Django models and Django ORM for banking and reconciliation data.
+- The banking and reconciliation components must run containerized in Docker with environment-driven configuration.
 - Data model should include:
   - `bank_accounts`: id, entity_id, name, account_number, bank_name, ledger_account_id
   - `bank_transactions`: id, entity_id, bank_account_id, transaction_date, amount, transaction_type, source_type, source_id, memo
@@ -56,6 +58,7 @@ Reliable cash accounting is required for SMB accounting and is a core part of th
 - Reconciled transactions are marked and cannot be double-cleared
 - Reconciliation preserves an audit trail of adjustments
 - Cash-basis reports can reflect bank account movement appropriately
+- Banking and reconciliation flows can be run and verified in Docker containers
 
 ## Testing Instructions
 - Unit tests for:

@@ -14,6 +14,7 @@ Build the core accounting engine and data model that makes LedgerOS an authorita
 - PostgreSQL schema and migrations
 - Immutable audit trail baseline for posted entries
 - YAML-based chart of accounts configuration
+- Dockerized application runtime for local development, testing, and deployment
 
 ## Why this epic exists
 This epic delivers the fundamental accounting controls required by the MVP. Without a reliable ledger, no other accounting workflow or report can be trusted.
@@ -30,6 +31,7 @@ This epic delivers the fundamental accounting controls required by the MVP. With
 
 ## Implementation Notes
 - Implementation must use Python/Django models and Django ORM for the core ledger schema.
+- The accounting core must run containerized in Docker, with runtime configuration suitable for Docker Compose or equivalent orchestration.
 - Data model should include at minimum:
   - `accounts`: account_code, name, type, normal_balance, entity_id, is_active
   - `journal_entries`: id, entity_id, date, description, period_id, status, source, created_by
@@ -72,6 +74,7 @@ This epic delivers the fundamental accounting controls required by the MVP. With
 - Closed periods reject new postings or modifications
 - A YAML chart of accounts can be loaded into the system
 - Audit trail records every posted entry creation and modification attempt
+- The accounting core can be started and exercised in Docker containers
 
 ## Testing Instructions
 - Unit tests for:

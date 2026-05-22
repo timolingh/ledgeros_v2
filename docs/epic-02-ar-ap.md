@@ -14,6 +14,7 @@ Implement core AR/AP workflows so LedgerOS can manage customer invoices, vendor 
 - Internally generated invoice numbers for UI-created invoices
 - Externally supplied invoice numbers for API-created invoices
 - AR/AP journal entry generation and application
+- Dockerized runtime for AR/AP workflows in local development, testing, and deployment
 
 ## Why this epic exists
 MVP success requires the system to process receivables and payables as accounting transactions, while preserving the boundary that LedgerOS is not a business workflow engine.
@@ -29,6 +30,7 @@ MVP success requires the system to process receivables and payables as accountin
 
 ## Implementation Notes
 - Implementation must use Python/Django models and Django ORM for AR/AP records.
+- The AR/AP module must run containerized in Docker and integrate cleanly with the rest of the stack through container-friendly environment configuration.
 - Data model should include:
   - `customers`: id, entity_id, name, customer_code, default_ar_account_id, status
   - `vendors`: id, entity_id, name, vendor_code, default_ap_account_id, status
@@ -70,6 +72,7 @@ MVP success requires the system to process receivables and payables as accountin
 - System generates internal numbering for UI-created invoices
 - Customer/vendor ledger balances reconcile with GL balances
 - AR/AP work without exposing non-accounting business workflow behavior
+- AR/AP workflows can be executed in Dockerized environments without requiring a host-specific install
 
 ## Testing Instructions
 - Unit tests for:

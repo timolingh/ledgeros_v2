@@ -11,6 +11,7 @@ Build the browser-based Core Accounting UI and supporting infrastructure so user
 - YAML configuration support for chart of accounts and API clients
 - Platform-agnostic deployment tooling
 - PostgreSQL production database deployment support
+- Dockerized UI and deployment runtime for local development, testing, and production-style environments
 
 ## Why this epic exists
 This epic delivers the user-facing and operational capabilities needed to make the accounting module usable without a separate business application.
@@ -27,6 +28,7 @@ This epic delivers the user-facing and operational capabilities needed to make t
 
 ## Implementation Notes
 - Implementation must use Django views, templates, and forms with selective HTMX/JavaScript for the Core Accounting UI.
+- The UI, application services, and deployment tooling must assume Docker as the primary runtime packaging format.
 - UI surfaces should be scoped to core accounting operations only, not business workflows.
   - Chart of accounts management
   - Journal entry posting
@@ -50,7 +52,7 @@ This epic delivers the user-facing and operational capabilities needed to make t
   - API client definitions
 - Deployment should target platform-agnostic self-hosting and include:
   - PostgreSQL setup guidance
-  - application startup scripts or container examples
+  - Docker images and/or Docker Compose examples
   - config management guidance for YAML files
   - environment variable standardization for database and API configuration
 
@@ -69,6 +71,7 @@ This epic delivers the user-facing and operational capabilities needed to make t
 - CSV import/export is available for approved MVP data objects
 - YAML configuration is supported for chart of accounts and API clients
 - Deployment instructions cover PostgreSQL-based production setup and platform-agnostic launch
+- The application can be launched from Docker images or Docker Compose without host-specific packaging steps
 
 ## Testing Instructions
 - Unit tests for:

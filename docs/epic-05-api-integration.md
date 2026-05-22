@@ -10,6 +10,7 @@ Implement the controlled Business Layer Interface and API client configuration r
 - Idempotency and validation error handling
 - External invoice number ownership for API-submitted records
 - Stable integration contract for external business layers
+- Dockerized API runtime for local development, testing, and deployment
 
 ## Why this epic exists
 One of the product goals is safe, reliable external integration without owning the business layer. This epic delivers that interface.
@@ -25,6 +26,7 @@ One of the product goals is safe, reliable external integration without owning t
 
 ## Implementation Notes
 - Implementation must use Django REST Framework for the accounting event ingestion API.
+- The API layer must run containerized in Docker, with configuration and secrets injected through environment variables or mounted config.
 - Define a minimal API surface, for example:
   - `POST /api/v1/invoices`
   - `POST /api/v1/bills`
@@ -67,6 +69,7 @@ One of the product goals is safe, reliable external integration without owning t
 - API-submitted invoices preserve external invoice numbers
 - API submissions generate the same ledger entries as UI-created accounting records
 - API submissions are logged in the audit trail
+- The API can be started and validated in Docker containers
 
 ## Testing Instructions
 - Unit tests for:

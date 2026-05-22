@@ -11,6 +11,7 @@ Deliver MVP financial reporting, period management, and US/California tax accoun
 - Report APIs
 - Accounting period summaries and closing period controls
 - US and California tax accounting support for MVP
+- Dockerized runtime for reporting, tax, and period management in local development, testing, and deployment
 
 ## Why this epic exists
 Users need auditable financial statements and period controls to close the books reliably, while meeting the MVP tax scope.
@@ -26,6 +27,7 @@ Users need auditable financial statements and period controls to close the books
 
 ## Implementation Notes
 - Implementation must use Python/Django services for report generation and Django ORM for report data access.
+- Reporting and tax services must run containerized in Docker and assume Docker-friendly deployment configuration.
 - Reporting engine should derive reports from posted journal entries, not mutable UI state.
 - Standard report definitions:
   - Balance Sheet: asset, liability, equity account groups as of a date.
@@ -60,6 +62,7 @@ Users need auditable financial statements and period controls to close the books
 - Drill-down opens underlying transaction details
 - Period locking prevents posting to closed periods and is reflected in reports
 - US and California tax support is available in the accounting schema and reporting outputs
+- Reporting, period, and tax workflows can be exercised in Dockerized environments
 
 ## Testing Instructions
 - Unit tests for:
