@@ -16,6 +16,8 @@ It uses the stronger structure discussed after the first implementation: project
 - Locked/soft-closed period validation
 - Reversal service that creates a posted reversing entry and marks the original as reversed
 - Ledger-affecting balance logic that includes posted entries and reversed originals; draft entries are excluded
+- Draft entries may be updated before posting; posted and reversed entries are not destructively editable
+- Corrections happen through reversal plus a new entry, not by editing posted accounting facts
 - Immutable audit logs for successful material accounting actions only
 - Thin DRF endpoints for core Epic 1 resources, using Django/DRF default authentication
 - Docker Compose for local app + PostgreSQL runtime
@@ -72,6 +74,7 @@ apps/
 - Posted entries are not destructively editable. They must be reversed.
 - Closed/locked behavior follows the PRD period lifecycle: open accepts postings, soft-closed requires explicit elevated allowance, locked rejects postings.
 - This implementation logs successful accounting state changes only. Blocked/failed attempts raise validation errors but do not create audit rows.
+- Future-scoped checklist items that depend on later accounting features are intentionally excluded from the Epic 1 acceptance list rather than modeled as failing tests.
 - Epic 5 external accounting event ingestion, API client YAML auth, idempotency keys, and invoice/payment event APIs are intentionally not implemented here.
 - Epic 6 full role model, UI permission matrix, browser UI, CSV import/export, and deployment polish are intentionally not implemented here.
 
@@ -161,3 +164,9 @@ DRF uses Django session/basic authentication and requires authenticated users by
 7. Lock the period and verify new postings inside it are rejected.
 8. Reverse the posted entry and verify the original remains visible and balances net back to zero.
 9. Confirm audit logs exist for COA import, period change, journal creation, posting, and reversal.
+
+## Out-of-scope acceptance items
+
+These behaviors are either already enforced through the service layer or are deferred to later epics, so they are not part of the active Epic 1 manual checklist:
+
+- Any parent-account / non-posting-account constraints that require later account hierarchy support.
