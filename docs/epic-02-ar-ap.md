@@ -28,6 +28,7 @@ MVP success requires the system to process receivables and payables as accountin
 - Validation rules for missing customer/vendor or invalid period
 
 ## Implementation Notes
+- Implementation must use Python/Django models and Django ORM for AR/AP records.
 - Data model should include:
   - `customers`: id, entity_id, name, customer_code, default_ar_account_id, status
   - `vendors`: id, entity_id, name, vendor_code, default_ap_account_id, status

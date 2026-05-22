@@ -29,6 +29,7 @@ This epic delivers the fundamental accounting controls required by the MVP. With
 - Initial audit log capture for ledger changes
 
 ## Implementation Notes
+- Implementation must use Python/Django models and Django ORM for the core ledger schema.
 - Data model should include at minimum:
   - `accounts`: account_code, name, type, normal_balance, entity_id, is_active
   - `journal_entries`: id, entity_id, date, description, period_id, status, source, created_by

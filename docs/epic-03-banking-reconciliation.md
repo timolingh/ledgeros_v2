@@ -25,6 +25,7 @@ Reliable cash accounting is required for SMB accounting and is a core part of th
 - Cash-basis statement support in reporting layer
 
 ## Implementation Notes
+- Implementation must use Python/Django models and Django ORM for banking and reconciliation data.
 - Data model should include:
   - `bank_accounts`: id, entity_id, name, account_number, bank_name, ledger_account_id
   - `bank_transactions`: id, entity_id, bank_account_id, transaction_date, amount, transaction_type, source_type, source_id, memo

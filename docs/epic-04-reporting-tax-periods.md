@@ -25,6 +25,7 @@ Users need auditable financial statements and period controls to close the books
 - Tax account mapping and US/CA tax reporting support
 
 ## Implementation Notes
+- Implementation must use Python/Django services for report generation and Django ORM for report data access.
 - Reporting engine should derive reports from posted journal entries, not mutable UI state.
 - Standard report definitions:
   - Balance Sheet: asset, liability, equity account groups as of a date.

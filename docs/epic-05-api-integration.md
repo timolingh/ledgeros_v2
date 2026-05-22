@@ -24,6 +24,7 @@ One of the product goals is safe, reliable external integration without owning t
 - Audit logs for API-submitted changes
 
 ## Implementation Notes
+- Implementation must use Django REST Framework for the accounting event ingestion API.
 - Define a minimal API surface, for example:
   - `POST /api/v1/invoices`
   - `POST /api/v1/bills`

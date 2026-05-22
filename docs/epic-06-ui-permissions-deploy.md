@@ -26,6 +26,7 @@ This epic delivers the user-facing and operational capabilities needed to make t
 - Package/launch requirements for platform-agnostic operation
 
 ## Implementation Notes
+- Implementation must use Django views, templates, and forms with selective HTMX/JavaScript for the Core Accounting UI.
 - UI surfaces should be scoped to core accounting operations only, not business workflows.
   - Chart of accounts management
   - Journal entry posting

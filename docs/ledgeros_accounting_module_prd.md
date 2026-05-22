@@ -82,6 +82,7 @@ LedgerOS Accounting Module will not provide:
 - managed hosting in MVP
 - multi-currency in MVP
 - OAuth API client authentication in MVP
+- React SPA in MVP unless later explicitly justified by UX requirements
 
 The module may receive accounting events from an external business layer, but it must not own or implement that business layer.
 
@@ -183,6 +184,9 @@ The product includes:
 - YAML API client configuration
 - platform-agnostic deployment tooling
 - PostgreSQL production database
+- Python/Django application stack
+- Django REST Framework APIs
+- Django-first UI with selective HTMX/JavaScript
 
 ## 6.2 Out of Scope
 
@@ -209,6 +213,7 @@ The product excludes:
 - OAuth in MVP
 - JSON configuration requirement in MVP
 - Markdown as authoritative machine-readable configuration
+- separate React SPA in MVP unless later explicitly re-decided
 
 ---
 
@@ -241,6 +246,7 @@ The MVP must deliver a usable accounting module with a narrow but complete accou
 | YAML Chart of Accounts Configuration | Required |
 | Platform-Agnostic Deployment | Required |
 | PostgreSQL Production Database | Required |
+| Python / Django Application Stack | Required |
 | Tax | US and California MVP support |
 | Multi-Entity | Post-MVP |
 | Multi-Currency | Post-MVP |
@@ -283,6 +289,7 @@ The API must not require `entity_id` in MVP. If omitted, the system assigns the 
 | native desktop applications | optional clients only; not required for core functionality |
 | managed hosting | self-hosted/container deployment is MVP |
 | OAuth 2.0 client credentials | more complex than needed for MVP server-to-server integrations |
+| React SPA | Django-first UI is MVP unless later UX requirements justify SPA |
 
 ---
 
@@ -343,7 +350,22 @@ CSV is used for import/export.
 
 YAML is used for declarative configuration of selected setup objects, including chart of accounts and API clients.
 
-## 8.7 Implementation Must Be Explicit and Testable
+## 8.7 Boring, Reliable Application Stack
+
+The MVP should prioritize a boring, reliable, implementation-friendly stack.
+
+LedgerOS MVP uses:
+
+- Python as the primary backend language
+- Django as the primary web framework
+- Django REST Framework for APIs
+- PostgreSQL as the production database
+- Django templates with selective HTMX/JavaScript for the Core Accounting UI
+- Docker Compose for local/self-hosted deployment
+
+A separate React SPA should not be introduced in MVP unless a later decision identifies a specific UX requirement that Django-first UI cannot satisfy.
+
+## 8.8 Implementation Must Be Explicit and Testable
 
 Each requirement should be capable of becoming:
 
@@ -364,6 +386,8 @@ Each requirement should be capable of becoming:
 ```txt
 Browser-Based Core Accounting UI
         ↓
+Django Core Accounting UI
+        ↓
 Accounting Services + APIs
         ↓
 Validation + Permission Checks
@@ -378,7 +402,7 @@ Reports + Audit Logs
 ```txt
 External Business Layer
         ↓
-Accounting Event API
+Django REST Framework Accounting Event API
         ↓
 Validation + Permission Checks
         ↓
@@ -438,7 +462,28 @@ The UI is a client of the same accounting services and APIs used by integrations
 
 The Core Accounting UI is limited to accounting-native workflows and must not include business workflow, CRM, ERP, project management, industry-specific, or operational application features.
 
-## 10.2 Core Accounting UI Areas
+## 10.2 Core Accounting UI Technology
+
+The Core Accounting UI should be implemented as a Django-first UI.
+
+MVP UI approach:
+
+- Django views
+- Django templates
+- Django forms where appropriate
+- selective HTMX or lightweight JavaScript for interactive workflows
+- no separate React SPA unless later re-decided
+
+Interactive areas that may use HTMX/JavaScript include:
+
+- report filters
+- report drill-down
+- reconciliation matching
+- chart config dry-run preview
+- integration event detail
+- CSV/YAML import preview
+
+## 10.3 Core Accounting UI Areas
 
 | Area | MVP Screens |
 |---|---|
@@ -451,7 +496,7 @@ The Core Accounting UI is limited to accounting-native workflows and must not in
 | Audit & Controls | audit log, period close/lock controls, accounting event log, failed event queue |
 | Integration Console | configured API client status, scopes, allowed event types, event status, validation errors, idempotency lookup, auth failure visibility |
 
-## 10.3 Core Accounting UI Requirements
+## 10.4 Core Accounting UI Requirements
 
 | ID | Requirement | Priority | Acceptance Criteria |
 |---|---|---|---|
@@ -468,6 +513,7 @@ The Core Accounting UI is limited to accounting-native workflows and must not in
 | UI-011 | Support customer/vendor pre-setup | MVP | User can create or CSV-import customers/vendors before submitting external events |
 | UI-012 | Display failed customer/vendor reference errors | MVP | Integration Console shows unknown customer/vendor errors with actionable messages |
 | UI-013 | Show read-only API client status | MVP | Integration Console displays configured API clients, scopes, allowed event types, status, and recent failures without editing secrets |
+| UI-014 | Use Django-first UI approach | MVP | Core Accounting UI is implemented with Django templates/forms and selective HTMX/JavaScript, not a separate SPA |
 
 ---
 
@@ -820,7 +866,18 @@ Multi-entity support is out of scope for MVP, but the internal schema includes a
 | ENTITY-005 | Consolidated reports | Post-MVP | System can produce consolidated statements |
 | ENTITY-006 | Intercompany transactions | Post-MVP | System supports due-to/due-from entries |
 
-## 14.10 Permissions and Audit
+## 14.10 Application Stack
+
+| ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| STACK-001 | Use Python backend | MVP | Backend implementation uses Python as the primary language |
+| STACK-002 | Use Django framework | MVP | Web application is implemented using Django |
+| STACK-003 | Use Django REST Framework for APIs | MVP | External APIs are implemented using DRF or equivalent Django-native API layer |
+| STACK-004 | Use Django-first UI | MVP | Core Accounting UI is implemented using Django templates/forms with selective HTMX/JavaScript |
+| STACK-005 | Avoid React SPA in MVP | MVP | A separate React SPA is not introduced unless later explicitly re-decided |
+| STACK-006 | Use Docker Compose for local/self-hosted deployment | MVP | Local/self-hosted deployment includes Docker Compose configuration for app and PostgreSQL |
+
+## 14.11 Permissions and Audit
 
 | ID | Requirement | Priority | Acceptance Criteria |
 |---|---|---|---|
@@ -1371,6 +1428,7 @@ The server verifies:
 | NFR-DEP-011 | Provide PostgreSQL container setup | Docker-based deployment includes PostgreSQL configuration suitable for local/self-hosted use |
 | NFR-DEP-012 | Version PostgreSQL migrations | All schema changes are managed through versioned migrations |
 | NFR-DEP-013 | Do not require SQLite for production | SQLite is not the official production database for MVP |
+| NFR-DEP-014 | Provide Docker Compose development deployment | MVP includes Docker Compose configuration for Django app and PostgreSQL |
 
 ---
 
@@ -1507,6 +1565,7 @@ Agents should decompose implementation into these epics:
 
 1. Project foundation
 2. PostgreSQL schema and migrations
+3. Django project structure
 3. Authentication and authorization
 4. Company/workspace context
 5. Hidden default entity model
@@ -1524,7 +1583,7 @@ Agents should decompose implementation into these epics:
 17. Cash/accrual reporting basis support
 18. Reporting service
 19. Report Builder Lite
-20. Accounting Event API
+20. Accounting Event API using Django REST Framework
 21. HMAC API authentication
 22. YAML API client configuration
 23. Integration console
@@ -1538,12 +1597,12 @@ For each requirement ID, implementation should include where applicable:
 
 - database schema
 - PostgreSQL migration
-- model/entity definition
+- Django model/entity definition
 - service method
 - validation logic
 - permission check
-- API endpoint
-- UI screen or flow
+- DRF API endpoint or Django view
+- Django UI screen or flow
 - audit logging
 - automated tests
 - error handling
@@ -1579,10 +1638,13 @@ Agentic AI systems must not:
 - use Markdown as authoritative machine-readable configuration
 - require JSON configuration in MVP
 - implement production behavior that depends on SQLite-specific semantics
+- introduce a separate React SPA in MVP unless explicitly re-decided
 
 Agentic AI systems should:
 
 - implement a Core Accounting UI, not a business application UI
+- use Django templates/forms with selective HTMX/JavaScript for MVP UI
+- use Django REST Framework for external APIs
 - use ledger-backed, accounting-approved report views or service-layer queries
 - implement AR/AP screens only as accounting workflows
 - keep invoice and bill screens as accounting records, not customizable business forms
@@ -1746,6 +1808,17 @@ Agentic AI systems should:
 | TEST-CONFIG-006 | YAML API client references plaintext secret | Config validation rejects or warns according to policy |
 | TEST-CONFIG-007 | Markdown config supplied as machine config | Not accepted as authoritative config |
 
+
+## 25.11 Application Stack Tests
+
+| Test ID | Scenario | Expected Result |
+|---|---|---|
+| TEST-STACK-001 | Start app with Docker Compose | Django app and PostgreSQL start successfully |
+| TEST-STACK-002 | Run Django migrations | Migrations apply cleanly to PostgreSQL |
+| TEST-STACK-003 | Access Django Core Accounting UI | Browser loads authenticated UI shell |
+| TEST-STACK-004 | Call DRF accounting API endpoint | API request is routed, authenticated, and validated |
+| TEST-STACK-005 | Attempt to access React SPA-only route | No MVP functionality depends on separate SPA |
+
 ---
 
 # 26. Success Metrics
@@ -1767,6 +1840,7 @@ Agentic AI systems should:
 | Platform independence | Core accounting workflows can be completed from a browser on Windows, macOS, or Linux |
 | Deployment portability | Core server deployment can run in a containerized Linux environment without Windows-specific dependencies |
 | Database readiness | MVP production deployment uses PostgreSQL with versioned migrations |
+| Stack readiness | MVP can run as a Django/PostgreSQL application through Docker Compose |
 | Implementation traceability | Every MVP requirement has ID, priority, and acceptance criteria |
 | Agentic implementability | Requirements can be converted into epics, tickets, tests, and schemas without guessing scope |
 
@@ -1981,3 +2055,18 @@ MVP uses:
 Markdown is documentation-only and is not an authoritative machine-readable configuration format.
 
 JSON is not required for MVP configuration.
+
+## Decision 14 — MVP Application Stack
+
+LedgerOS MVP will use:
+
+- Python as the primary backend language
+- Django as the primary web application framework
+- Django REST Framework for external APIs
+- PostgreSQL as the production database
+- Django-first Core Accounting UI
+- Django templates with selective HTMX/JavaScript for interactive UI behavior
+- Docker Compose for local/self-hosted deployment
+
+A separate React SPA should not be introduced in MVP unless a later decision identifies a specific UX requirement that Django-first UI cannot satisfy.
+
