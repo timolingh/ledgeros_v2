@@ -1,6 +1,7 @@
 from datetime import date
 
 import pytest
+from django.core.exceptions import ValidationError
 
 from apps.accounting.models import Account, AuditLog, JournalEntry
 from apps.accounting.services import JournalLineInput, create_accounting_period, create_and_post_journal_entry, reverse_journal_entry
@@ -48,3 +49,19 @@ def test_reversal_offsets_posted_balances(accounting_ready):
     assert Account.objects.get(account_code="1000").posted_balance() == 0
     assert Account.objects.get(account_code="4000").posted_balance() == 0
     assert AuditLog.objects.filter(action="journal_entry_reversed", record_id=str(entry.pk)).exists()
+
+
+@pytest.mark.django_db
+def test_cannot_reverse_a_reversal(accounting_ready):
+    entry = create_and_post_journal_entry(
+        entry_date=date(2026, 5, 1),
+        description="Cash sale",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+    reversal = reverse_journal_entry(entry=entry, reversal_date=date(2026, 5, 2))
+
+    with pytest.raises(ValidationError, match="Reversal entries cannot be reversed"):
+        reverse_journal_entry(entry=reversal, reversal_date=date(2026, 5, 3))

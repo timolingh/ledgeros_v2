@@ -16,6 +16,8 @@ def reverse_journal_entry(*, entry: JournalEntry, reversal_date: date, user=None
     original = JournalEntry.objects.select_for_update().get(pk=entry.pk)
     if original.status != JournalEntry.Status.POSTED:
         raise ValidationError("Only posted journal entries can be reversed.")
+    if original.reversal_of is not None:
+        raise ValidationError("Reversal entries cannot be reversed.")
     reversal_lines = [
         JournalLineInput(
             account_code=line.account.account_code,

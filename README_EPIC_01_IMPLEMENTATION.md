@@ -72,6 +72,7 @@ apps/
 - Draft entries do not affect account balances.
 - Only posted entries and reversed originals affect ledger balances; a reversing posted entry offsets the original.
 - Posted entries are not destructively editable. They must be reversed.
+- Reversal entries cannot be reversed; corrections are always made by reversing the original posted entry only.
 - Closed/locked behavior follows the PRD period lifecycle: open accepts postings, soft-closed requires explicit elevated allowance, locked rejects postings.
 - This implementation logs successful accounting state changes only. Blocked/failed attempts raise validation errors but do not create audit rows.
 - Future-scoped checklist items that depend on later accounting features are intentionally excluded from the Epic 1 acceptance list rather than modeled as failing tests.
@@ -105,16 +106,29 @@ docker compose run --rm web pytest
 
 Create an accounting period:
 
-```python
+```bash
+docker compose run --rm -T web python manage.py shell <<'PY'
 from datetime import date
 from apps.accounting.services import create_accounting_period
 
-create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+period = create_accounting_period(
+    start_date=date(2026, 1, 1),
+    end_date=date(2026, 12, 31),
+    name="FY2026",
+)
+
+print(period.id)
+print(period.name)
+print(period.start_date)
+print(period.end_date)
+print(period.status)
+PY
 ```
 
 Create and post a balanced entry:
 
-```python
+```bash
+docker compose run --rm -T web python manage.py shell <<'PY'
 from datetime import date
 from apps.accounting.services import JournalLineInput, create_and_post_journal_entry
 
@@ -126,15 +140,27 @@ entry = create_and_post_journal_entry(
         JournalLineInput(account_code="4000", side="credit", amount="1000.00"),
     ],
 )
+PY
 ```
 
-Reverse a posted entry:
+Reverse the last posted entry:
 
-```python
+```bash
+docker compose run --rm -T web python manage.py shell <<'PY'
 from datetime import date
+from apps.accounting.models import JournalEntry
 from apps.accounting.services import reverse_journal_entry
 
-reversal = reverse_journal_entry(entry=entry, reversal_date=date(2026, 5, 2))
+entry = JournalEntry.objects.filter(status="posted").latest("id")
+
+reversal = reverse_journal_entry(
+    entry=entry,
+    reversal_date=date(2026, 5, 2),
+)
+
+print("Original:", entry.id, entry.status)
+print("Reversal:", reversal.id, reversal.status)
+PY
 ```
 
 ## API surface included
