@@ -99,6 +99,8 @@ Open the app at `http://localhost:8000/admin/` or use the API at `http://localho
 ## Run tests
 
 ```bash
+docker compose run --rm web python manage.py check
+docker compose run --rm web python manage.py makemigrations --check --dry-run
 docker compose run --rm web pytest
 ```
 
@@ -192,8 +194,8 @@ These are thin Epic 1 core endpoints, not the Epic 5 external event ingestion AP
 - `POST /api/v1/periods/{id}/change_status/`
 - `GET/POST /api/v1/journal-entries/`
 - `PUT/PATCH /api/v1/journal-entries/{id}/` for draft-only edits
-- `POST /api/v1/journal-entries/{id}/post/`
-- `POST /api/v1/journal-entries/{id}/reverse/`
+- `POST /api/v1/journal-entries/{id}/post/` with optional `allow_soft_closed=true`
+- `POST /api/v1/journal-entries/{id}/reverse/` with optional `allow_soft_closed=true`
 - `GET /api/v1/audit-logs/`
 
 DRF uses Django session/basic authentication and requires authenticated users by default. Full MVP role enforcement belongs to Epic 6.
@@ -206,9 +208,10 @@ DRF uses Django session/basic authentication and requires authenticated users by
 4. Confirm the draft does not change balances.
 5. Post it and verify account balances changed.
 6. Attempt an unbalanced journal entry and verify posting is rejected.
-7. Lock the period and verify new postings inside it are rejected.
-8. Reverse the posted entry and verify the original remains visible and balances net back to zero.
-9. Confirm audit logs exist for COA import, period change, journal creation, posting, and reversal.
+7. Soft-close the period and verify posting is rejected unless `allow_soft_closed=true` is passed to the post action or service call.
+8. Lock the period and verify new postings inside it are rejected.
+9. Reverse the posted entry and verify the original remains visible and balances net back to zero.
+10. Confirm audit logs exist for COA import, period change, journal creation, posting, and reversal.
 
 ## Out-of-scope acceptance items
 
