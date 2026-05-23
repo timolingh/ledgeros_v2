@@ -143,6 +143,25 @@ entry = create_and_post_journal_entry(
 PY
 ```
 
+View account balances in Python:
+
+```bash
+docker compose run --rm -T web python manage.py shell <<'PY'
+from apps.accounting.models import Account
+
+for account in Account.objects.order_by('account_code'):
+    print(account.account_code, account.name, account.posted_balance())
+PY
+```
+
+Or fetch balances through the Epic 1 API:
+
+```bash
+curl -u <username>:<password> http://localhost:8000/api/v1/accounts/ | python -m json.tool
+```
+
+The account payload includes `posted_balance` for each account.
+
 Reverse the last posted entry:
 
 ```bash

@@ -1,6 +1,9 @@
 from django.contrib import admin
+from django.core.exceptions import ValidationError
+from django.forms.models import BaseInlineFormSet
 
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, JournalLine
+from apps.accounting.services.posting import JournalLineInput, assert_line_inputs_balanced
 
 
 @admin.register(Entity)
@@ -16,9 +19,34 @@ class AccountAdmin(admin.ModelAdmin):
     search_fields = ["account_code", "name"]
 
 
+class JournalLineInlineFormSet(BaseInlineFormSet):
+    def clean(self):
+        super().clean()
+        if any(self.errors):
+            return
+
+        lines = []
+        for form in self.forms:
+            if not form.cleaned_data or form.cleaned_data.get("DELETE", False):
+                continue
+            lines.append(
+                JournalLineInput(
+                    account_code=form.cleaned_data["account"].account_code,
+                    side=form.cleaned_data["side"],
+                    amount=form.cleaned_data["amount"],
+                    description=form.cleaned_data.get("description", ""),
+                )
+            )
+
+        if len(lines) < 2:
+            raise ValidationError("A journal entry requires at least two lines.")
+        assert_line_inputs_balanced(lines)
+
+
 class JournalLineInline(admin.TabularInline):
     model = JournalLine
     extra = 0
+    formset = JournalLineInlineFormSet
 
 
 @admin.register(JournalEntry)

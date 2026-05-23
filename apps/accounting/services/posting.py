@@ -47,10 +47,25 @@ def validate_line_inputs(entity, lines: Iterable[JournalLineInput]) -> list[tupl
     return resolved
 
 
+def assert_line_inputs_balanced(lines: Iterable[JournalLineInput]) -> None:
+    total_debits = Decimal("0.00")
+    total_credits = Decimal("0.00")
+    for line in lines:
+        if line.side == JournalLine.Side.DEBIT:
+            total_debits += Decimal(str(line.amount))
+        else:
+            total_credits += Decimal(str(line.amount))
+    if total_debits != total_credits:
+        raise ValidationError("Journal entry must balance: total debits must equal total credits.")
+    if total_debits == Decimal("0.00"):
+        raise ValidationError("Journal entry must include non-zero debit and credit totals.")
+
+
 @transaction.atomic
 def create_draft_journal_entry(*, entry_date: date, description: str, lines: Iterable[JournalLineInput], created_by=None, source: str = "manual") -> JournalEntry:
     entity = get_default_entity()
     resolved_lines = validate_line_inputs(entity, lines)
+    assert_line_inputs_balanced(lines)
     period = resolve_period_for_posting(entity, entry_date)
     entry = JournalEntry.objects.create(
         entity=entity,
@@ -65,6 +80,8 @@ def create_draft_journal_entry(*, entry_date: date, description: str, lines: Ite
         JournalLine(journal_entry=entry, account=account, side=side, amount=amount, description=line_description)
         for account, side, amount, line_description in resolved_lines
     )
+    entry.refresh_from_db()
+    entry.assert_balanced()
     audit_success(action="journal_entry_created", record=entry, user=created_by, source=source, metadata={"status": entry.status})
     return entry
 
@@ -84,11 +101,14 @@ def update_draft_journal_entry(*, entry: JournalEntry, entry_date: date | None =
     entry.save(update_fields=sorted(set(update_fields)))
     if lines is not None:
         resolved_lines = validate_line_inputs(entry.entity, lines)
+        assert_line_inputs_balanced(lines)
         entry.lines.all().delete()
         JournalLine.objects.bulk_create(
             JournalLine(journal_entry=entry, account=account, side=side, amount=amount, description=line_description)
             for account, side, amount, line_description in resolved_lines
         )
+        entry.refresh_from_db()
+        entry.assert_balanced()
     audit_success(
         action="journal_entry_updated",
         record=entry,

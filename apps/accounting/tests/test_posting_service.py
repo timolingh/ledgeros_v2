@@ -2,8 +2,10 @@ from datetime import date
 
 import pytest
 from django.core.exceptions import ValidationError
+from django.forms.models import inlineformset_factory
 
-from apps.accounting.models import Account, AccountingPeriod, AuditLog, JournalEntry
+from apps.accounting.admin import JournalLineInlineFormSet
+from apps.accounting.models import Account, AccountingPeriod, AuditLog, JournalEntry, JournalLine
 from apps.accounting.services import JournalLineInput, create_accounting_period, create_and_post_journal_entry, create_draft_journal_entry, post_journal_entry, update_draft_journal_entry
 from apps.accounting.services.chart_import import import_chart_of_accounts
 from apps.accounting.services.entities import get_default_entity
@@ -47,6 +49,42 @@ def test_draft_does_not_affect_balances(coa):
     )
     assert draft.status == JournalEntry.Status.DRAFT
     assert Account.objects.get(account_code="1000").posted_balance() == 0
+
+
+@pytest.mark.django_db
+def test_unbalanced_draft_cannot_be_created(coa):
+    create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    with pytest.raises(ValidationError):
+        create_draft_journal_entry(
+            entry_date=date(2026, 5, 1),
+            description="Unbalanced draft",
+            lines=[
+                JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+                JournalLineInput(account_code="4000", side="credit", amount="99.00"),
+            ],
+        )
+
+
+@pytest.mark.django_db
+def test_unbalanced_draft_update_is_rejected(coa):
+    create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    draft = create_draft_journal_entry(
+        entry_date=date(2026, 5, 1),
+        description="Draft cash sale",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+
+    with pytest.raises(ValidationError):
+        update_draft_journal_entry(
+            entry=draft,
+            lines=[
+                JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+                JournalLineInput(account_code="4000", side="credit", amount="99.00"),
+            ],
+        )
 
 
 @pytest.mark.django_db
@@ -174,21 +212,6 @@ def test_post_balanced_entry_changes_balances(coa):
 
 
 @pytest.mark.django_db
-def test_unbalanced_entry_cannot_post(coa):
-    create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
-    draft = create_draft_journal_entry(
-        entry_date=date(2026, 5, 1),
-        description="Bad entry",
-        lines=[
-            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
-            JournalLineInput(account_code="4000", side="credit", amount="99.00"),
-        ],
-    )
-    with pytest.raises(ValidationError):
-        post_journal_entry(entry=draft)
-
-
-@pytest.mark.django_db
 def test_soft_closed_period_rejects_posting(coa):
     period = create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
     period.mark_soft_closed()
@@ -243,20 +266,18 @@ def test_inactive_account_rejects_journal_entry_creation(coa):
 def test_failed_validations_do_not_create_audit_logs(coa):
     create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
     before = AuditLog.objects.count()
-    draft = create_draft_journal_entry(
-        entry_date=date(2026, 5, 1),
-        description="Bad entry",
-        lines=[
-            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
-            JournalLineInput(account_code="4000", side="credit", amount="99.00"),
-        ],
-    )
-
     with pytest.raises(ValidationError):
-        post_journal_entry(entry=draft)
+        create_draft_journal_entry(
+            entry_date=date(2026, 5, 1),
+            description="Bad entry",
+            lines=[
+                JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+                JournalLineInput(account_code="4000", side="credit", amount="99.00"),
+            ],
+        )
 
-    assert AuditLog.objects.count() == before + 1
-    assert not AuditLog.objects.filter(action="journal_entry_posted").exists()
+    assert AuditLog.objects.count() == before
+    assert not AuditLog.objects.filter(action="journal_entry_created").exists()
 
 
 @pytest.mark.django_db
@@ -264,3 +285,37 @@ def test_successful_actions_create_audit_logs(coa):
     create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
     assert AuditLog.objects.filter(action="chart_of_accounts_imported").exists()
     assert AuditLog.objects.filter(action="period_created").exists()
+
+
+@pytest.mark.django_db
+def test_admin_inline_formset_rejects_unbalanced_journal_entry(coa):
+    period = create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    entry = JournalEntry.objects.create(
+        entity=coa,
+        date=date(2026, 5, 1),
+        description="Admin draft",
+        period=period,
+        status=JournalEntry.Status.DRAFT,
+        source="manual",
+    )
+
+    formset_class = inlineformset_factory(JournalEntry, JournalLine, fields=("account", "side", "amount", "description"), extra=0, formset=JournalLineInlineFormSet)
+    data = {
+        "lines-TOTAL_FORMS": "2",
+        "lines-INITIAL_FORMS": "0",
+        "lines-MIN_NUM_FORMS": "0",
+        "lines-MAX_NUM_FORMS": "1000",
+        "lines-0-account": str(Account.objects.get(account_code="1000").pk),
+        "lines-0-side": JournalLine.Side.DEBIT,
+        "lines-0-amount": "100.00",
+        "lines-0-description": "",
+        "lines-1-account": str(Account.objects.get(account_code="4000").pk),
+        "lines-1-side": JournalLine.Side.CREDIT,
+        "lines-1-amount": "99.00",
+        "lines-1-description": "",
+    }
+    formset = formset_class(data=data, instance=entry, prefix="lines")
+
+    assert not formset.is_valid()
+    assert formset.non_form_errors()
+    assert "Journal entry must balance" in str(formset.non_form_errors())
