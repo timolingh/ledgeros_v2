@@ -1,11 +1,14 @@
 from datetime import date
 
 import pytest
+from django.contrib import admin as django_admin
 from django.core.exceptions import ValidationError
 from django.forms.models import inlineformset_factory
+from django.contrib.auth import get_user_model
+from django.test import RequestFactory
 
-from apps.accounting.admin import JournalLineInlineFormSet
-from apps.accounting.models import Account, AccountingPeriod, AuditLog, JournalEntry, JournalLine
+from apps.accounting.admin import AccountAdmin, AccountingPeriodAdmin, JournalEntryAdmin, JournalLineInlineFormSet
+from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, JournalLine
 from apps.accounting.services import JournalLineInput, create_accounting_period, create_and_post_journal_entry, create_draft_journal_entry, post_journal_entry, update_draft_journal_entry
 from apps.accounting.services.chart_import import import_chart_of_accounts
 from apps.accounting.services.entities import get_default_entity
@@ -319,3 +322,48 @@ def test_admin_inline_formset_rejects_unbalanced_journal_entry(coa):
     assert not formset.is_valid()
     assert formset.non_form_errors()
     assert "Journal entry must balance" in str(formset.non_form_errors())
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "admin_class, model_class, model_kwargs",
+    [
+        (
+            AccountAdmin,
+            Account,
+            {"account_code": "5000", "name": "Other Income", "type": Account.AccountType.REVENUE, "normal_balance": Account.NormalBalance.CREDIT},
+        ),
+        (
+            AccountingPeriodAdmin,
+            AccountingPeriod,
+            {"name": "FY2027", "start_date": date(2027, 1, 1), "end_date": date(2027, 12, 31)},
+        ),
+        (
+            JournalEntryAdmin,
+            JournalEntry,
+            {"date": date(2026, 5, 1), "description": "Admin entry", "period": None, "status": JournalEntry.Status.DRAFT, "source": "manual"},
+        ),
+    ],
+)
+def test_admin_forms_hide_entity_and_assign_default_entity(coa, admin_class, model_class, model_kwargs):
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser(username="admin", password="password", email="admin@example.com")
+    admin_instance = admin_class(model_class, django_admin.site)
+
+    form_class = admin_instance.get_form(request)
+    assert "entity" not in form_class.base_fields
+
+    entity = get_default_entity()
+    if admin_class is JournalEntryAdmin:
+        period = create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+        model_kwargs = {**model_kwargs, "period": period}
+    obj = model_class(entity=None, **model_kwargs)
+
+    admin_instance.save_model(request, obj, form=None, change=False)
+    obj.refresh_from_db()
+    assert obj.entity == entity
+
+
+@pytest.mark.django_db
+def test_entity_is_not_registered_in_admin():
+    assert Entity not in django_admin.site._registry
