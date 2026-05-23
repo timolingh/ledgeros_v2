@@ -157,7 +157,7 @@ PY
 Or fetch balances through the Epic 1 API:
 
 ```bash
-curl -u <username>:<password> http://localhost:8000/api/v1/accounts/ | python -m json.tool
+curl -u <username>:<password> http://localhost:8000/api/v1/accounts/ | jq
 ```
 
 The account payload includes `posted_balance` for each account.
