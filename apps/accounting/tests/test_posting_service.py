@@ -365,5 +365,25 @@ def test_admin_forms_hide_entity_and_assign_default_entity(coa, admin_class, mod
 
 
 @pytest.mark.django_db
+def test_account_admin_shows_posted_balance(coa):
+    create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    create_and_post_journal_entry(
+        entry_date=date(2026, 5, 1),
+        description="Cash sale",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser(username="balance-admin", password="password", email="balance-admin@example.com")
+    admin_instance = AccountAdmin(Account, django_admin.site)
+    assert "posted_balance" in admin_instance.get_list_display(request=request)
+    assert "posted_balance" in admin_instance.get_readonly_fields(request=request)
+    assert admin_instance.posted_balance(Account.objects.get(account_code="1000")) == 100
+
+
+@pytest.mark.django_db
 def test_entity_is_not_registered_in_admin():
     assert Entity not in django_admin.site._registry

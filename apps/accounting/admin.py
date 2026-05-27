@@ -10,9 +10,14 @@ from apps.accounting.services.posting import JournalLineInput, assert_line_input
 @admin.register(Account)
 class AccountAdmin(admin.ModelAdmin):
     exclude = ["entity"]
-    list_display = ["account_code", "name", "type", "normal_balance", "is_active"]
+    list_display = ["account_code", "name", "type", "normal_balance", "posted_balance", "is_active"]
     list_filter = ["type", "normal_balance", "is_active"]
     search_fields = ["account_code", "name"]
+    readonly_fields = ["posted_balance"]
+
+    @admin.display(description="Posted balance")
+    def posted_balance(self, obj: Account):
+        return obj.posted_balance()
 
     def save_model(self, request, obj, form, change):
         if not change and not obj.entity_id:
