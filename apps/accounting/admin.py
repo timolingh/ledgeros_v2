@@ -1,10 +1,13 @@
+from django import forms
 from django.contrib import admin
 from django.core.exceptions import ValidationError
 from django.forms.models import BaseInlineFormSet
+from django.utils import timezone
 
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, JournalEntry, JournalLine
 from apps.accounting.services.entities import get_default_entity
-from apps.accounting.services.posting import JournalLineInput, assert_line_inputs_balanced, update_draft_journal_entry
+from apps.accounting.services import change_period_status, post_journal_entry, reverse_journal_entry
+from apps.accounting.services.posting import JournalLineInput, assert_line_inputs_balanced, resolve_period_for_posting, update_draft_journal_entry
 from apps.accounting.services.writes import save_account, save_accounting_period
 
 
@@ -62,18 +65,64 @@ class JournalLineInline(admin.TabularInline):
     formset = JournalLineInlineFormSet
 
 
+class JournalEntryAdminForm(forms.ModelForm):
+    class Meta:
+        model = JournalEntry
+        fields = "__all__"
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if self.errors or not self.instance.pk:
+            return cleaned_data
+
+        desired_status = cleaned_data.get("status", self.instance.status)
+        original_status = JournalEntry.objects.filter(pk=self.instance.pk).values_list("status", flat=True).first()
+        if desired_status == original_status:
+            return cleaned_data
+
+        if original_status == JournalEntry.Status.DRAFT and desired_status == JournalEntry.Status.POSTED:
+            entry_date = cleaned_data.get("date", self.instance.date)
+            try:
+                period = resolve_period_for_posting(self.instance.entity, entry_date)
+                period.assert_posting_allowed(allow_soft_closed=True)
+            except ValidationError as exc:
+                self.add_error("status", exc)
+        elif original_status == JournalEntry.Status.POSTED and desired_status == JournalEntry.Status.REVERSED:
+            reversal_date = timezone.now().date()
+            try:
+                period = resolve_period_for_posting(self.instance.entity, reversal_date)
+                period.assert_posting_allowed(allow_soft_closed=True)
+            except ValidationError as exc:
+                self.add_error("status", exc)
+        else:
+            self.add_error("status", ValidationError("Journal entry status may only be changed through the posting or reversal services."))
+
+        return cleaned_data
+
+
 @admin.register(JournalEntry)
 class JournalEntryAdmin(admin.ModelAdmin):
+    form = JournalEntryAdminForm
     exclude = ["entity"]
     list_display = ["id", "date", "description", "status", "source", "period"]
     list_filter = ["status", "source", "date"]
     search_fields = ["description"]
-    readonly_fields = ["status", "posted_at", "reversed_at", "reversal_of"]
+    readonly_fields = ["posted_at", "reversed_at", "reversal_of"]
+    actions = ["post_selected_entries", "reverse_selected_entries"]
     inlines = [JournalLineInline]
+    fieldsets = (
+        (None, {"fields": ("date", "description", "status", "source", "period")}),
+        ("Status history", {"fields": ("posted_at", "reversed_at", "reversal_of")}),
+    )
 
     def save_model(self, request, obj, form, change):
         if not change and not obj.entity_id:
             obj.entity = get_default_entity()
+        if change and obj.pk:
+            original_status = JournalEntry.objects.filter(pk=obj.pk).values_list("status", flat=True).first()
+            obj.status = original_status
+        else:
+            obj.status = JournalEntry.Status.DRAFT
         super().save_model(request, obj, form, change)
 
     def save_related(self, request, form, formsets, change):
@@ -104,16 +153,58 @@ class JournalEntryAdmin(admin.ModelAdmin):
                 source="admin",
                 audit_action="journal_entry_created" if not change else "journal_entry_updated",
             )
+        desired_status = form.cleaned_data.get("status", form.instance.status)
+        current_status = JournalEntry.objects.filter(pk=form.instance.pk).values_list("status", flat=True).first()
+        if desired_status == JournalEntry.Status.POSTED and current_status == JournalEntry.Status.DRAFT:
+            post_journal_entry(entry=form.instance, user=request.user, source="admin", allow_soft_closed=True)
+        elif desired_status == JournalEntry.Status.REVERSED and current_status == JournalEntry.Status.POSTED:
+            reverse_journal_entry(entry=form.instance, reversal_date=timezone.now().date(), user=request.user, source="admin", allow_soft_closed=True)
+
+    @admin.action(description="Post selected journal entries")
+    def post_selected_entries(self, request, queryset):
+        for entry in queryset:
+            post_journal_entry(entry=entry, user=request.user, source="admin", allow_soft_closed=True)
+
+    @admin.action(description="Reverse selected journal entries")
+    def reverse_selected_entries(self, request, queryset):
+        for entry in queryset:
+            reverse_journal_entry(entry=entry, reversal_date=timezone.now().date(), user=request.user, source="admin", allow_soft_closed=True)
 
 
 @admin.register(AccountingPeriod)
 class AccountingPeriodAdmin(admin.ModelAdmin):
+    class AccountingPeriodAdminForm(forms.ModelForm):
+        class Meta:
+            model = AccountingPeriod
+            fields = "__all__"
+
+        def clean(self):
+            cleaned_data = super().clean()
+            if self.errors or not self.instance.pk:
+                return cleaned_data
+
+            desired_status = cleaned_data.get("status", self.instance.status)
+            if desired_status == self.instance.status:
+                return cleaned_data
+            if desired_status == AccountingPeriod.Status.SOFT_CLOSED and self.instance.status == AccountingPeriod.Status.LOCKED:
+                self.add_error("status", ValidationError("Locked periods cannot be soft-closed."))
+            return cleaned_data
+
+    form = AccountingPeriodAdminForm
     exclude = ["entity"]
     list_display = ["id", "name", "start_date", "end_date", "status"]
     list_filter = ["status"]
-    readonly_fields = ["status", "closed_at", "locked_at"]
+    readonly_fields = ["closed_at", "locked_at"]
+    actions = ["mark_open", "mark_soft_closed", "mark_locked"]
+    fieldsets = (
+        (None, {"fields": ("name", "start_date", "end_date", "status")}),
+        ("Status history", {"fields": ("closed_at", "locked_at")}),
+    )
 
     def save_model(self, request, obj, form, change):
+        desired_status = form.cleaned_data.get("status", obj.status) if form and hasattr(form, "cleaned_data") else obj.status
+        original_status = AccountingPeriod.objects.filter(pk=obj.pk).values_list("status", flat=True).first() if change and obj.pk else AccountingPeriod.Status.OPEN
+        obj.status = original_status
         save_accounting_period(
             period=obj,
             entity=obj.entity if obj.entity_id else get_default_entity(),
@@ -121,6 +212,23 @@ class AccountingPeriodAdmin(admin.ModelAdmin):
             end_date=obj.end_date,
             name=obj.name,
         )
+        if desired_status != original_status:
+            change_period_status(period=obj, status=desired_status, user=request.user, source="admin")
+
+    @admin.action(description="Mark selected periods open")
+    def mark_open(self, request, queryset):
+        for period in queryset:
+            change_period_status(period=period, status=AccountingPeriod.Status.OPEN, user=request.user, source="admin")
+
+    @admin.action(description="Mark selected periods soft closed")
+    def mark_soft_closed(self, request, queryset):
+        for period in queryset:
+            change_period_status(period=period, status=AccountingPeriod.Status.SOFT_CLOSED, user=request.user, source="admin")
+
+    @admin.action(description="Mark selected periods locked")
+    def mark_locked(self, request, queryset):
+        for period in queryset:
+            change_period_status(period=period, status=AccountingPeriod.Status.LOCKED, user=request.user, source="admin")
 
 
 @admin.register(AuditLog)

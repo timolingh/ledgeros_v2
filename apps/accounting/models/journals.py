@@ -64,10 +64,15 @@ class JournalEntry(models.Model):
     def clean(self) -> None:
         if self.pk:
             original_status = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
-            if original_status is not None and original_status != self.status:
+            allowed_statuses = {original_status}
+            if original_status == self.Status.DRAFT:
+                allowed_statuses.add(self.Status.POSTED)
+            elif original_status == self.Status.POSTED:
+                allowed_statuses.add(self.Status.REVERSED)
+            if self.status not in {status for status in allowed_statuses if status is not None}:
                 raise ValidationError("Journal entry status may only be changed through the posting or reversal services.")
-        elif self.status != self.Status.DRAFT:
-            raise ValidationError("Journal entries must be created as drafts.")
+        elif self.status not in {self.Status.DRAFT, self.Status.POSTED}:
+            raise ValidationError("Journal entries must be created as drafts or posted entries.")
         if self.pk and self.lines.exists():
             self.assert_balanced()
 

@@ -150,7 +150,7 @@ def test_unsaved_journal_entry_full_clean_does_not_query_lines(coa):
 
 
 @pytest.mark.django_db
-def test_direct_status_change_is_rejected_by_model_validation(coa):
+def test_direct_status_change_draft_to_posted_is_allowed_for_admin_transition(coa):
     create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
     draft = create_draft_journal_entry(
         entry_date=date(2026, 5, 1),
@@ -162,11 +162,25 @@ def test_direct_status_change_is_rejected_by_model_validation(coa):
     )
 
     draft.status = JournalEntry.Status.POSTED
+    draft.full_clean()
 
-    with pytest.raises(ValidationError) as exc_info:
+
+@pytest.mark.django_db
+def test_direct_status_change_draft_to_reversed_is_rejected(coa):
+    create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    draft = create_draft_journal_entry(
+        entry_date=date(2026, 5, 1),
+        description="Draft entry",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+
+    draft.status = JournalEntry.Status.REVERSED
+
+    with pytest.raises(ValidationError):
         draft.full_clean()
-
-    assert "posting or reversal services" in str(exc_info.value).lower()
 
 
 @pytest.mark.django_db
@@ -421,6 +435,163 @@ def test_journal_entry_admin_save_related_uses_shared_update_service(coa):
 
 
 @pytest.mark.django_db
+def test_journal_entry_admin_status_dropdown_posts_entry(coa):
+    period = create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    entry = JournalEntry.objects.create(entity=coa, date=date(2026, 5, 1), description="Admin draft", period=period, status=JournalEntry.Status.DRAFT, source="manual")
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser(username="admin-post", password="password", email="admin-post@example.com")
+    admin_instance = JournalEntryAdmin(JournalEntry, django_admin.site)
+    form = SimpleNamespace(instance=entry, cleaned_data={"date": entry.date, "description": entry.description, "status": JournalEntry.Status.POSTED})
+    formset_class = inlineformset_factory(JournalEntry, JournalLine, fields=("account", "side", "amount", "description"), extra=0, formset=JournalLineInlineFormSet)
+    formset = formset_class(
+        data={
+            "lines-TOTAL_FORMS": "2",
+            "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0",
+            "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-account": str(Account.objects.get(account_code="1000").pk),
+            "lines-0-side": JournalLine.Side.DEBIT,
+            "lines-0-amount": "100.00",
+            "lines-0-description": "",
+            "lines-1-account": str(Account.objects.get(account_code="4000").pk),
+            "lines-1-side": JournalLine.Side.CREDIT,
+            "lines-1-amount": "100.00",
+            "lines-1-description": "",
+        },
+        instance=entry,
+        prefix="lines",
+    )
+
+    assert formset.is_valid()
+    admin_instance.save_model(request, entry, form, change=True)
+    admin_instance.save_related(request, form, [formset], change=True)
+    entry.refresh_from_db()
+
+    assert entry.status == JournalEntry.Status.POSTED
+    assert entry.posted_at is not None
+
+
+@pytest.mark.django_db
+def test_journal_entry_admin_status_dropdown_rejects_locked_period(coa):
+    period = create_accounting_period(start_date=date(2026, 5, 28), end_date=date(2026, 5, 28), name="Locked Day")
+    period.mark_locked()
+    entry = JournalEntry.objects.create(entity=coa, date=period.start_date, description="Admin draft", period=period, status=JournalEntry.Status.DRAFT, source="manual")
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser(username="admin-post-locked", password="password", email="admin-post-locked@example.com")
+    admin_instance = JournalEntryAdmin(JournalEntry, django_admin.site)
+    form_class = admin_instance.get_form(request, obj=entry)
+    form = form_class(
+        data={
+            "date": str(entry.date),
+            "description": entry.description,
+            "status": JournalEntry.Status.POSTED,
+            "source": entry.source,
+            "period": str(entry.period_id),
+        },
+        instance=entry,
+    )
+
+    assert not form.is_valid()
+    assert "Locked accounting periods reject postings." in str(form.errors["status"])
+
+
+@pytest.mark.django_db
+def test_journal_entry_admin_exposes_status_history_fields(coa):
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser(username="admin-layout", password="password", email="admin-layout@example.com")
+    admin_instance = JournalEntryAdmin(JournalEntry, django_admin.site)
+
+    fieldsets = admin_instance.get_fieldsets(request)
+    flattened = {field for _, opts in fieldsets for field in opts.get("fields", ())}
+
+    assert "status" in flattened
+    assert "posted_at" in flattened
+    assert "reversed_at" in flattened
+    assert "reversal_of" in flattened
+
+
+@pytest.mark.django_db
+def test_journal_entry_admin_actions_can_post_soft_closed_entries(coa):
+    period = create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    period.mark_soft_closed()
+    entry = create_draft_journal_entry(
+        entry_date=date(2026, 5, 1),
+        description="Soft closed admin entry",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser(username="admin-post", password="password", email="admin-post@example.com")
+    admin_instance = JournalEntryAdmin(JournalEntry, django_admin.site)
+
+    admin_instance.post_selected_entries(request, JournalEntry.objects.filter(pk=entry.pk))
+    entry.refresh_from_db()
+
+    assert entry.status == JournalEntry.Status.POSTED
+    assert entry.posted_at is not None
+
+
+@pytest.mark.django_db
+def test_accounting_period_admin_actions_change_status(coa):
+    period = create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser(username="admin-period", password="password", email="admin-period@example.com")
+    admin_instance = AccountingPeriodAdmin(AccountingPeriod, django_admin.site)
+
+    admin_instance.mark_soft_closed(request, AccountingPeriod.objects.filter(pk=period.pk))
+    period.refresh_from_db()
+    assert period.status == AccountingPeriod.Status.SOFT_CLOSED
+
+    admin_instance.mark_locked(request, AccountingPeriod.objects.filter(pk=period.pk))
+    period.refresh_from_db()
+    assert period.status == AccountingPeriod.Status.LOCKED
+
+    admin_instance.mark_open(request, AccountingPeriod.objects.filter(pk=period.pk))
+    period.refresh_from_db()
+    assert period.status == AccountingPeriod.Status.OPEN
+
+
+@pytest.mark.django_db
+def test_accounting_period_admin_status_dropdown_changes_status(coa):
+    period = create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser(username="admin-period-form", password="password", email="admin-period-form@example.com")
+    admin_instance = AccountingPeriodAdmin(AccountingPeriod, django_admin.site)
+    form = SimpleNamespace(
+        instance=period,
+        cleaned_data={
+            "name": period.name,
+            "start_date": period.start_date,
+            "end_date": period.end_date,
+            "status": AccountingPeriod.Status.SOFT_CLOSED,
+        },
+    )
+
+    admin_instance.save_model(request, period, form, change=True)
+    period.refresh_from_db()
+
+    assert period.status == AccountingPeriod.Status.SOFT_CLOSED
+    assert period.closed_at is not None
+
+
+@pytest.mark.django_db
+def test_accounting_period_admin_exposes_status_history_fields(coa):
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser(username="admin-period-layout", password="password", email="admin-period-layout@example.com")
+    admin_instance = AccountingPeriodAdmin(AccountingPeriod, django_admin.site)
+
+    fieldsets = admin_instance.get_fieldsets(request)
+    flattened = {field for _, opts in fieldsets for field in opts.get("fields", ())}
+
+    assert "status" in flattened
+    assert "closed_at" in flattened
+    assert "locked_at" in flattened
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize(
     "admin_class, model_class, model_kwargs",
     [
@@ -449,12 +620,12 @@ def test_admin_forms_hide_entity_and_assign_default_entity(coa, admin_class, mod
     form_class = admin_instance.get_form(request)
     assert "entity" not in form_class.base_fields
     if admin_class is JournalEntryAdmin:
-        assert "status" not in form_class.base_fields
+        assert "status" in form_class.base_fields
         assert "posted_at" not in form_class.base_fields
         assert "reversed_at" not in form_class.base_fields
         assert "reversal_of" not in form_class.base_fields
     if admin_class is AccountingPeriodAdmin:
-        assert "status" not in form_class.base_fields
+        assert "status" in form_class.base_fields
         assert "closed_at" not in form_class.base_fields
         assert "locked_at" not in form_class.base_fields
 
