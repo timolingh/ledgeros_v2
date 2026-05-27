@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 from django.contrib import admin as django_admin
+from django.contrib.auth.models import Permission
 from django.core.exceptions import ValidationError
 from django.forms.models import inlineformset_factory
 from django.contrib.auth import get_user_model
@@ -39,6 +40,20 @@ def coa(tmp_path, entity):
     )
     import_chart_of_accounts(path=path, entity=entity)
     return entity
+
+
+def create_staff_user(*, username: str, permissions: tuple[str, ...] = ()):
+    user = get_user_model().objects.create_user(username=username, password="password", email=f"{username}@example.com")
+    user.is_staff = True
+    user.save(update_fields=["is_staff"])
+    if permissions:
+        user.user_permissions.set(
+            Permission.objects.filter(
+                content_type__app_label="accounting",
+                codename__in=permissions,
+            )
+        )
+    return user
 
 
 @pytest.mark.django_db
@@ -665,12 +680,114 @@ def test_journal_entry_admin_actions_can_post_soft_closed_entries(coa):
     )
 
     request = RequestFactory().get("/admin/")
-    request.user = get_user_model().objects.create_superuser(username="admin-post", password="password", email="admin-post@example.com")
+    request.user = create_staff_user(
+        username="admin-post",
+        permissions=("post_soft_closed_journal_entries",),
+    )
     admin_instance = JournalEntryAdmin(JournalEntry, django_admin.site)
 
     admin_instance.post_selected_entries(request, JournalEntry.objects.filter(pk=entry.pk))
     entry.refresh_from_db()
 
+    assert entry.status == JournalEntry.Status.POSTED
+    assert entry.posted_at is not None
+
+
+@pytest.mark.django_db
+def test_journal_entry_admin_change_view_rejects_soft_closed_posting_without_permission(coa):
+    period = create_accounting_period(start_date=date(2026, 2, 1), end_date=date(2026, 2, 28), name="FY2026-02")
+    period.mark_soft_closed()
+    entry = create_draft_journal_entry(
+        entry_date=date(2026, 2, 10),
+        description="Admin draft",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+
+    user = create_staff_user(username="admin-client-soft-closed")
+    user.user_permissions.set(
+        Permission.objects.filter(
+            content_type__app_label="accounting",
+            codename__in=("change_journalentry", "view_journalentry"),
+        )
+    )
+    client = Client()
+    client.force_login(user)
+
+    formset_class = inlineformset_factory(JournalEntry, JournalLine, fields=("account", "side", "amount", "description"), extra=0, formset=JournalLineInlineFormSet)
+    formset = formset_class(instance=entry, prefix="lines")
+    data = {
+        "date": str(entry.date),
+        "description": entry.description,
+        "status": JournalEntry.Status.POSTED,
+        "source": entry.source,
+        "period": str(entry.period_id),
+        "lines-TOTAL_FORMS": str(formset.total_form_count()),
+        "lines-INITIAL_FORMS": str(formset.initial_form_count()),
+        "lines-MIN_NUM_FORMS": "0",
+        "lines-MAX_NUM_FORMS": "1000",
+    }
+    for index, inline_form in enumerate(formset.forms):
+        data[f"lines-{index}-account"] = str(inline_form.instance.account_id)
+        data[f"lines-{index}-side"] = inline_form.instance.side
+        data[f"lines-{index}-amount"] = str(inline_form.instance.amount)
+        data[f"lines-{index}-description"] = inline_form.instance.description
+        data[f"lines-{index}-id"] = str(inline_form.instance.pk)
+        data[f"lines-{index}-journal_entry"] = str(entry.pk)
+
+    response = client.post(f"/admin/accounting/journalentry/{entry.pk}/change/", data, HTTP_HOST="localhost")
+    assert response.status_code == 200
+    assert "Soft-closed accounting periods require elevated approval for posting." in response.content.decode()
+    entry.refresh_from_db()
+    assert entry.status == JournalEntry.Status.DRAFT
+
+
+@pytest.mark.django_db
+def test_journal_entry_admin_change_view_posts_soft_closed_entry_with_permission(coa):
+    period = create_accounting_period(start_date=date(2026, 2, 1), end_date=date(2026, 2, 28), name="FY2026-02")
+    period.mark_soft_closed()
+    entry = create_draft_journal_entry(
+        entry_date=date(2026, 2, 10),
+        description="Admin draft",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+
+    user = create_staff_user(
+        username="admin-client-soft-closed-post",
+        permissions=("change_journalentry", "view_journalentry", "post_soft_closed_journal_entries"),
+    )
+    client = Client()
+    client.force_login(user)
+
+    formset_class = inlineformset_factory(JournalEntry, JournalLine, fields=("account", "side", "amount", "description"), extra=0, formset=JournalLineInlineFormSet)
+    formset = formset_class(instance=entry, prefix="lines")
+    data = {
+        "date": str(entry.date),
+        "description": entry.description,
+        "status": JournalEntry.Status.POSTED,
+        "source": entry.source,
+        "period": str(entry.period_id),
+        "lines-TOTAL_FORMS": str(formset.total_form_count()),
+        "lines-INITIAL_FORMS": str(formset.initial_form_count()),
+        "lines-MIN_NUM_FORMS": "0",
+        "lines-MAX_NUM_FORMS": "1000",
+    }
+    for index, inline_form in enumerate(formset.forms):
+        data[f"lines-{index}-account"] = str(inline_form.instance.account_id)
+        data[f"lines-{index}-side"] = inline_form.instance.side
+        data[f"lines-{index}-amount"] = str(inline_form.instance.amount)
+        data[f"lines-{index}-description"] = inline_form.instance.description
+        data[f"lines-{index}-id"] = str(inline_form.instance.pk)
+        data[f"lines-{index}-journal_entry"] = str(entry.pk)
+
+    response = client.post(f"/admin/accounting/journalentry/{entry.pk}/change/", data, HTTP_HOST="localhost")
+    assert response.status_code == 302
+    entry.refresh_from_db()
     assert entry.status == JournalEntry.Status.POSTED
     assert entry.posted_at is not None
 

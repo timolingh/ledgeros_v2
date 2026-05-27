@@ -35,6 +35,12 @@ class JournalEntry(models.Model):
 
     class Meta:
         ordering = ["-date", "-id"]
+        permissions = [
+            (
+                "post_soft_closed_journal_entries",
+                "Can post journal entries in soft-closed periods",
+            )
+        ]
 
     def __str__(self) -> str:
         return f"JE-{self.id or 'new'} {self.date} {self.status}"
