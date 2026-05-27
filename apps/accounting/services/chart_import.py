@@ -11,6 +11,7 @@ from django.db import transaction
 from apps.accounting.models import Account, Entity
 from apps.accounting.services.audit import audit_success
 from apps.accounting.services.entities import get_default_entity
+from apps.accounting.services.writes import save_account
 
 
 @dataclass(frozen=True)
@@ -72,27 +73,13 @@ def import_chart_of_accounts(*, path: str | Path, entity: Entity | None = None, 
     accounts = validate_chart_of_accounts_payload(load_chart_of_accounts_yaml(path))
     created = updated = unchanged = 0
     for item in accounts:
-        account, was_created = Account.objects.get_or_create(
-            entity=entity,
-            account_code=item["account_code"],
-            defaults={
-                "name": item["name"],
-                "type": item["type"],
-                "normal_balance": item["normal_balance"],
-                "is_active": item["is_active"],
-            },
-        )
-        if was_created:
+        account = Account.objects.filter(entity=entity, account_code=item["account_code"]).first()
+        if account is None:
+            save_account(entity=entity, **item)
             created += 1
             continue
-        changes = []
-        for field in ["name", "type", "normal_balance", "is_active"]:
-            if getattr(account, field) != item[field]:
-                setattr(account, field, item[field])
-                changes.append(field)
-        if changes:
-            account.full_clean()
-            account.save(update_fields=[*changes, "updated_at"])
+        if any(getattr(account, field) != item[field] for field in ["name", "type", "normal_balance", "is_active"]):
+            save_account(account=account, entity=entity, **item)
             updated += 1
         else:
             unchanged += 1

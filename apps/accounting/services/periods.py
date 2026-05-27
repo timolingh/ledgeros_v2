@@ -8,13 +8,12 @@ from django.db import transaction
 from apps.accounting.models import AccountingPeriod
 from apps.accounting.services.audit import audit_success
 from apps.accounting.services.entities import get_default_entity
+from apps.accounting.services.writes import save_accounting_period
 
 
 def create_accounting_period(*, start_date: date, end_date: date, name: str = "", user=None, source: str = "manual") -> AccountingPeriod:
     entity = get_default_entity()
-    if AccountingPeriod.objects.filter(entity=entity, start_date__lte=end_date, end_date__gte=start_date).exists():
-        raise ValidationError("Accounting periods may not overlap for the default entity.")
-    period = AccountingPeriod.objects.create(entity=entity, start_date=start_date, end_date=end_date, name=name)
+    period = save_accounting_period(entity=entity, start_date=start_date, end_date=end_date, name=name)
     audit_success(action="period_created", record=period, user=user, source=source, metadata={"status": period.status})
     return period
 

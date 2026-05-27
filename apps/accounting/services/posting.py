@@ -88,7 +88,7 @@ def create_draft_journal_entry(*, entry_date: date, description: str, lines: Ite
 
 
 @transaction.atomic
-def update_draft_journal_entry(*, entry: JournalEntry, entry_date: date | None = None, description: str | None = None, lines: Iterable[JournalLineInput] | None = None, user=None, source: str = "manual") -> JournalEntry:
+def update_draft_journal_entry(*, entry: JournalEntry, entry_date: date | None = None, description: str | None = None, lines: Iterable[JournalLineInput] | None = None, user=None, source: str = "manual", audit_action: str = "journal_entry_updated") -> JournalEntry:
     entry.assert_mutable()
     before = {"date": str(entry.date), "description": entry.description, "line_count": entry.lines.count()}
     update_fields = ["updated_at"]
@@ -112,7 +112,7 @@ def update_draft_journal_entry(*, entry: JournalEntry, entry_date: date | None =
         entry.refresh_from_db()
         entry.assert_balanced()
     audit_success(
-        action="journal_entry_updated",
+        action=audit_action,
         record=entry,
         user=user,
         source=source,

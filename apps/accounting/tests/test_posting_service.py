@@ -1,4 +1,5 @@
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 from django.contrib import admin as django_admin
@@ -149,6 +150,26 @@ def test_unsaved_journal_entry_full_clean_does_not_query_lines(coa):
 
 
 @pytest.mark.django_db
+def test_direct_status_change_is_rejected_by_model_validation(coa):
+    create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    draft = create_draft_journal_entry(
+        entry_date=date(2026, 5, 1),
+        description="Draft entry",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+
+    draft.status = JournalEntry.Status.POSTED
+
+    with pytest.raises(ValidationError) as exc_info:
+        draft.full_clean()
+
+    assert "posting or reversal services" in str(exc_info.value).lower()
+
+
+@pytest.mark.django_db
 def test_reversed_entries_cannot_be_edited(coa):
     create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
     draft = create_draft_journal_entry(
@@ -242,6 +263,24 @@ def test_soft_closed_period_rejects_posting(coa):
     )
     with pytest.raises(ValidationError):
         post_journal_entry(entry=draft)
+
+
+@pytest.mark.django_db
+def test_create_and_post_journal_entry_rejects_soft_closed_period_without_override(coa):
+    period = create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    period.mark_soft_closed()
+
+    with pytest.raises(ValidationError) as exc_info:
+        create_and_post_journal_entry(
+            entry_date=date(2026, 5, 1),
+            description="Soft closed period entry",
+            lines=[
+                JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+                JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+            ],
+        )
+
+    assert "soft-closed accounting periods require elevated approval for posting" in str(exc_info.value).lower()
 
 
 @pytest.mark.django_db
@@ -339,6 +378,49 @@ def test_admin_inline_formset_rejects_unbalanced_journal_entry(coa):
 
 
 @pytest.mark.django_db
+def test_journal_entry_admin_save_related_uses_shared_update_service(coa):
+    period = create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    entry = JournalEntry.objects.create(
+        entity=coa,
+        date=date(2026, 5, 1),
+        description="Admin draft",
+        period=period,
+        status=JournalEntry.Status.DRAFT,
+        source="manual",
+    )
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser(username="admin-save", password="password", email="admin-save@example.com")
+    admin_instance = JournalEntryAdmin(JournalEntry, django_admin.site)
+    form = SimpleNamespace(instance=entry, cleaned_data={"date": entry.date, "description": entry.description})
+    formset_class = inlineformset_factory(JournalEntry, JournalLine, fields=("account", "side", "amount", "description"), extra=0, formset=JournalLineInlineFormSet)
+    formset = formset_class(
+        data={
+            "lines-TOTAL_FORMS": "2",
+            "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0",
+            "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-account": str(Account.objects.get(account_code="1000").pk),
+            "lines-0-side": JournalLine.Side.DEBIT,
+            "lines-0-amount": "100.00",
+            "lines-0-description": "",
+            "lines-1-account": str(Account.objects.get(account_code="4000").pk),
+            "lines-1-side": JournalLine.Side.CREDIT,
+            "lines-1-amount": "100.00",
+            "lines-1-description": "",
+        },
+        instance=entry,
+        prefix="lines",
+    )
+
+    assert formset.is_valid()
+    admin_instance.save_related(request, form, [formset], change=False)
+    entry.refresh_from_db()
+
+    assert entry.lines.count() == 2
+    assert AuditLog.objects.filter(action="journal_entry_created", record_id=str(entry.pk)).exists()
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize(
     "admin_class, model_class, model_kwargs",
     [
@@ -366,6 +448,15 @@ def test_admin_forms_hide_entity_and_assign_default_entity(coa, admin_class, mod
 
     form_class = admin_instance.get_form(request)
     assert "entity" not in form_class.base_fields
+    if admin_class is JournalEntryAdmin:
+        assert "status" not in form_class.base_fields
+        assert "posted_at" not in form_class.base_fields
+        assert "reversed_at" not in form_class.base_fields
+        assert "reversal_of" not in form_class.base_fields
+    if admin_class is AccountingPeriodAdmin:
+        assert "status" not in form_class.base_fields
+        assert "closed_at" not in form_class.base_fields
+        assert "locked_at" not in form_class.base_fields
 
     entity = get_default_entity()
     if admin_class is JournalEntryAdmin:

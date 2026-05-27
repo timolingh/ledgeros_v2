@@ -37,6 +37,9 @@ Goal-driven execution:
 
 3. **Do not bypass the service layer for state-changing operations.**  
    Views, serializers, admin actions, management commands, and future integrations must call domain services for mutations. They must not directly change critical fields such as journal status, period status, posted timestamps, reversal links, or audit records.
+   - Django admin, API, and management commands must share the same application write path for the same accounting behavior.
+   - If a state-changing action exists in the API, the Django path must invoke the same service entrypoint rather than reimplementing the mutation or editing model fields directly.
+   - Read-only convenience fields may differ by surface, but the underlying accounting transition must remain one service call.
 
 4. **Avoid polished scaffolds that are not wired together.**  
    New files must be internally consistent across imports, model fields, admin config, serializers, migrations, URLs, tests, and commands. If a symbol is referenced, it must exist. If a field is renamed, every caller must be updated. No handoff should rely on the user discovering integration errors.

@@ -62,6 +62,12 @@ class JournalEntry(models.Model):
             raise ValidationError("Only draft journal entries may be edited destructively.")
 
     def clean(self) -> None:
+        if self.pk:
+            original_status = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if original_status is not None and original_status != self.status:
+                raise ValidationError("Journal entry status may only be changed through the posting or reversal services.")
+        elif self.status != self.Status.DRAFT:
+            raise ValidationError("Journal entries must be created as drafts.")
         if self.pk and self.lines.exists():
             self.assert_balanced()
 

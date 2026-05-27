@@ -9,6 +9,7 @@ from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, 
 from apps.accounting.services import JournalLineInput, post_journal_entry, reverse_journal_entry, update_draft_journal_entry
 from apps.accounting.services.entities import get_default_entity
 from apps.accounting.services.posting import create_draft_journal_entry
+from apps.accounting.services.writes import save_account, save_accounting_period
 
 
 class EntitySerializer(serializers.ModelSerializer):
@@ -30,17 +31,10 @@ class AccountSerializer(serializers.ModelSerializer):
         return str(obj.posted_balance())
 
     def create(self, validated_data):
-        account = Account(entity=get_default_entity(), **validated_data)
-        account.full_clean()
-        account.save()
-        return account
+        return save_account(entity=get_default_entity(), **validated_data)
 
     def update(self, instance, validated_data):
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        instance.full_clean()
-        instance.save()
-        return instance
+        return save_account(account=instance, entity=instance.entity, **validated_data)
 
 
 class AccountingPeriodSerializer(serializers.ModelSerializer):
@@ -48,6 +42,9 @@ class AccountingPeriodSerializer(serializers.ModelSerializer):
         model = AccountingPeriod
         fields = ["id", "name", "start_date", "end_date", "status", "closed_at", "locked_at", "created_at", "updated_at"]
         read_only_fields = ["id", "status", "closed_at", "locked_at", "created_at", "updated_at"]
+
+    def update(self, instance, validated_data):
+        return save_accounting_period(period=instance, entity=instance.entity, **validated_data)
 
 
 class JournalLineSerializer(serializers.ModelSerializer):
