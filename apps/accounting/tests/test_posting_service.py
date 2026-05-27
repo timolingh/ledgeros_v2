@@ -135,6 +135,20 @@ def test_posted_entries_cannot_be_edited(coa):
 
 
 @pytest.mark.django_db
+def test_unsaved_journal_entry_full_clean_does_not_query_lines(coa):
+    create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    entry = JournalEntry(
+        entity=coa,
+        date=date(2026, 5, 1),
+        description="Draft entry shell",
+        status=JournalEntry.Status.DRAFT,
+        source="manual",
+    )
+
+    entry.full_clean()
+
+
+@pytest.mark.django_db
 def test_reversed_entries_cannot_be_edited(coa):
     create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
     draft = create_draft_journal_entry(

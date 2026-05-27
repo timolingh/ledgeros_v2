@@ -57,3 +57,20 @@ def test_create_and_post_journal_entry_via_api(api_client, accounting_ready):
     response = api_client.post(f"/api/v1/journal-entries/{entry_id}/post/", {}, format="json")
     assert response.status_code == 200
     assert response.data["status"] == "posted"
+
+
+@pytest.mark.django_db
+def test_one_line_journal_entry_via_api_is_rejected(api_client, accounting_ready):
+    response = api_client.post(
+        "/api/v1/journal-entries/",
+        {
+            "date": "2026-05-01",
+            "description": "Invalid one-line entry",
+            "lines": [
+                {"account_code": "1000", "side": "debit", "amount": "100.00"},
+            ],
+        },
+        format="json",
+    )
+    assert response.status_code == 400
+    assert "at least two lines" in str(response.data).lower()

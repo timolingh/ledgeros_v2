@@ -64,8 +64,9 @@ def assert_line_inputs_balanced(lines: Iterable[JournalLineInput]) -> None:
 @transaction.atomic
 def create_draft_journal_entry(*, entry_date: date, description: str, lines: Iterable[JournalLineInput], created_by=None, source: str = "manual") -> JournalEntry:
     entity = get_default_entity()
-    resolved_lines = validate_line_inputs(entity, lines)
-    assert_line_inputs_balanced(lines)
+    line_inputs = list(lines)
+    resolved_lines = validate_line_inputs(entity, line_inputs)
+    assert_line_inputs_balanced(line_inputs)
     period = resolve_period_for_posting(entity, entry_date)
     entry = JournalEntry.objects.create(
         entity=entity,
@@ -100,8 +101,9 @@ def update_draft_journal_entry(*, entry: JournalEntry, entry_date: date | None =
         update_fields.append("description")
     entry.save(update_fields=sorted(set(update_fields)))
     if lines is not None:
-        resolved_lines = validate_line_inputs(entry.entity, lines)
-        assert_line_inputs_balanced(lines)
+        line_inputs = list(lines)
+        resolved_lines = validate_line_inputs(entry.entity, line_inputs)
+        assert_line_inputs_balanced(line_inputs)
         entry.lines.all().delete()
         JournalLine.objects.bulk_create(
             JournalLine(journal_entry=entry, account=account, side=side, amount=amount, description=line_description)

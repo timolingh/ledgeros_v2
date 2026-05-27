@@ -114,6 +114,21 @@ class JournalEntryWriteSerializer(serializers.Serializer):
     source = serializers.CharField(required=False, default="manual")
     lines = JournalLineInputSerializer(many=True)
 
+    def validate(self, attrs):
+        lines = attrs.get("lines", [])
+        if len(lines) < 2:
+            raise serializers.ValidationError({"lines": "A journal entry requires at least two lines."})
+
+        total_debits = sum(line["amount"] for line in lines if line["side"] == JournalLine.Side.DEBIT)
+        total_credits = sum(line["amount"] for line in lines if line["side"] == JournalLine.Side.CREDIT)
+        if total_debits != total_credits:
+            raise serializers.ValidationError({"lines": "Journal entry must balance: total debits must equal total credits."})
+
+        if total_debits == 0:
+            raise serializers.ValidationError({"lines": "Journal entry must include non-zero debit and credit totals."})
+
+        return attrs
+
     def _line_inputs(self) -> list[JournalLineInput]:
         return [JournalLineInput(**line) for line in self.validated_data["lines"]]
 

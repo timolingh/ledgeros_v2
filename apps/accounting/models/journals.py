@@ -62,7 +62,7 @@ class JournalEntry(models.Model):
             raise ValidationError("Only draft journal entries may be edited destructively.")
 
     def clean(self) -> None:
-        if self.lines.exists():
+        if self.pk and self.lines.exists():
             self.assert_balanced()
 
     def delete(self, *args: Any, **kwargs: Any):
