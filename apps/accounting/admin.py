@@ -1,7 +1,8 @@
 from django import forms
 from django.contrib import admin
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.forms.models import BaseInlineFormSet
+from django.db import transaction
 from django.utils import timezone
 
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, JournalEntry, JournalLine
@@ -9,6 +10,14 @@ from apps.accounting.services.entities import get_default_entity
 from apps.accounting.services import change_period_status, post_journal_entry, reverse_journal_entry
 from apps.accounting.services.posting import JournalLineInput, assert_line_inputs_balanced, resolve_period_for_posting, update_draft_journal_entry
 from apps.accounting.services.writes import save_account, save_accounting_period
+from apps.accounting.transition_rules import validate_accounting_period_status_transition, validate_journal_entry_status_transition
+
+SOFT_CLOSED_POST_PERMISSION = "accounting.post_soft_closed_journal_entries"
+SOFT_CLOSED_POST_DENIED = "You do not have permission to post into soft-closed accounting periods."
+
+
+def user_can_post_soft_closed_periods(user) -> bool:
+    return bool(user and user.is_authenticated and user.has_perm(SOFT_CLOSED_POST_PERMISSION))
 
 
 @admin.register(Account)
@@ -72,11 +81,34 @@ class JournalEntryAdminForm(forms.ModelForm):
 
     def clean(self):
         cleaned_data = super().clean()
-        if self.errors or not self.instance.pk:
+        if self.errors:
             return cleaned_data
 
         desired_status = cleaned_data.get("status", self.instance.status)
+        allow_soft_closed = user_can_post_soft_closed_periods(getattr(self, "request_user", None))
+        if not self.instance.pk:
+            if desired_status == JournalEntry.Status.POSTED:
+                try:
+                    period = cleaned_data.get("period")
+                    if period is None:
+                        entry_date = cleaned_data.get("date")
+                        if entry_date is None:
+                            return cleaned_data
+                        period = resolve_period_for_posting(get_default_entity(), entry_date)
+                    period.assert_posting_allowed(allow_soft_closed=allow_soft_closed)
+                except ValidationError as exc:
+                    self.add_error("status", exc)
+            elif desired_status == JournalEntry.Status.REVERSED:
+                self.add_error("status", ValidationError("New journal entries must be created as drafts or posted entries."))
+            return cleaned_data
+
         original_status = JournalEntry.objects.filter(pk=self.instance.pk).values_list("status", flat=True).first()
+        try:
+            validate_journal_entry_status_transition(original_status=original_status, desired_status=desired_status)
+        except ValidationError as exc:
+            self.add_error("status", exc)
+            return cleaned_data
+
         if desired_status == original_status:
             return cleaned_data
 
@@ -84,14 +116,14 @@ class JournalEntryAdminForm(forms.ModelForm):
             entry_date = cleaned_data.get("date", self.instance.date)
             try:
                 period = resolve_period_for_posting(self.instance.entity, entry_date)
-                period.assert_posting_allowed(allow_soft_closed=True)
+                period.assert_posting_allowed(allow_soft_closed=allow_soft_closed)
             except ValidationError as exc:
                 self.add_error("status", exc)
         elif original_status == JournalEntry.Status.POSTED and desired_status == JournalEntry.Status.REVERSED:
             reversal_date = timezone.now().date()
             try:
                 period = resolve_period_for_posting(self.instance.entity, reversal_date)
-                period.assert_posting_allowed(allow_soft_closed=True)
+                period.assert_posting_allowed(allow_soft_closed=allow_soft_closed)
             except ValidationError as exc:
                 self.add_error("status", exc)
         else:
@@ -115,6 +147,18 @@ class JournalEntryAdmin(admin.ModelAdmin):
         ("Status history", {"fields": ("posted_at", "reversed_at", "reversal_of")}),
     )
 
+    def get_form(self, request, obj=None, change=False, **kwargs):
+        form = super().get_form(request, obj=obj, change=change, **kwargs)
+
+        class RequestAwareForm(form):
+            request_user = request.user
+
+        return RequestAwareForm
+
+    def _assert_soft_closed_posting_permission(self, request, period):
+        if period.status == AccountingPeriod.Status.SOFT_CLOSED and not user_can_post_soft_closed_periods(request.user):
+            raise PermissionDenied(SOFT_CLOSED_POST_DENIED)
+
     def save_model(self, request, obj, form, change):
         if not change and not obj.entity_id:
             obj.entity = get_default_entity()
@@ -125,7 +169,19 @@ class JournalEntryAdmin(admin.ModelAdmin):
             obj.status = JournalEntry.Status.DRAFT
         super().save_model(request, obj, form, change)
 
+    @transaction.atomic
     def save_related(self, request, form, formsets, change):
+        desired_status = form.cleaned_data.get("status", form.instance.status)
+        current_status = JournalEntry.objects.filter(pk=form.instance.pk).values_list("status", flat=True).first()
+        allow_soft_closed = user_can_post_soft_closed_periods(request.user)
+        if desired_status == JournalEntry.Status.POSTED and current_status == JournalEntry.Status.DRAFT:
+            period = resolve_period_for_posting(form.instance.entity, form.cleaned_data["date"])
+            self._assert_soft_closed_posting_permission(request, period)
+        elif desired_status == JournalEntry.Status.REVERSED and current_status == JournalEntry.Status.POSTED:
+            reversal_date = timezone.now().date()
+            period = resolve_period_for_posting(form.instance.entity, reversal_date)
+            self._assert_soft_closed_posting_permission(request, period)
+
         lines = []
         for formset in formsets:
             if getattr(formset, "model", None) is not JournalLine:
@@ -153,22 +209,33 @@ class JournalEntryAdmin(admin.ModelAdmin):
                 source="admin",
                 audit_action="journal_entry_created" if not change else "journal_entry_updated",
             )
-        desired_status = form.cleaned_data.get("status", form.instance.status)
-        current_status = JournalEntry.objects.filter(pk=form.instance.pk).values_list("status", flat=True).first()
         if desired_status == JournalEntry.Status.POSTED and current_status == JournalEntry.Status.DRAFT:
-            post_journal_entry(entry=form.instance, user=request.user, source="admin", allow_soft_closed=True)
+            post_journal_entry(entry=form.instance, user=request.user, source="admin", allow_soft_closed=allow_soft_closed)
         elif desired_status == JournalEntry.Status.REVERSED and current_status == JournalEntry.Status.POSTED:
-            reverse_journal_entry(entry=form.instance, reversal_date=timezone.now().date(), user=request.user, source="admin", allow_soft_closed=True)
+            reverse_journal_entry(entry=form.instance, reversal_date=reversal_date, user=request.user, source="admin", allow_soft_closed=allow_soft_closed)
 
     @admin.action(description="Post selected journal entries")
+    @transaction.atomic
     def post_selected_entries(self, request, queryset):
-        for entry in queryset:
-            post_journal_entry(entry=entry, user=request.user, source="admin", allow_soft_closed=True)
+        entries = list(queryset)
+        for entry in entries:
+            period = resolve_period_for_posting(entry.entity, entry.date)
+            self._assert_soft_closed_posting_permission(request, period)
+        allow_soft_closed = user_can_post_soft_closed_periods(request.user)
+        for entry in entries:
+            post_journal_entry(entry=entry, user=request.user, source="admin", allow_soft_closed=allow_soft_closed)
 
     @admin.action(description="Reverse selected journal entries")
+    @transaction.atomic
     def reverse_selected_entries(self, request, queryset):
-        for entry in queryset:
-            reverse_journal_entry(entry=entry, reversal_date=timezone.now().date(), user=request.user, source="admin", allow_soft_closed=True)
+        entries = list(queryset)
+        reversal_date = timezone.now().date()
+        for entry in entries:
+            period = resolve_period_for_posting(entry.entity, reversal_date)
+            self._assert_soft_closed_posting_permission(request, period)
+        allow_soft_closed = user_can_post_soft_closed_periods(request.user)
+        for entry in entries:
+            reverse_journal_entry(entry=entry, reversal_date=reversal_date, user=request.user, source="admin", allow_soft_closed=allow_soft_closed)
 
 
 @admin.register(AccountingPeriod)
@@ -184,10 +251,10 @@ class AccountingPeriodAdmin(admin.ModelAdmin):
                 return cleaned_data
 
             desired_status = cleaned_data.get("status", self.instance.status)
-            if desired_status == self.instance.status:
-                return cleaned_data
-            if desired_status == AccountingPeriod.Status.SOFT_CLOSED and self.instance.status == AccountingPeriod.Status.LOCKED:
-                self.add_error("status", ValidationError("Locked periods cannot be soft-closed."))
+            try:
+                validate_accounting_period_status_transition(original_status=self.instance.status, desired_status=desired_status)
+            except ValidationError as exc:
+                self.add_error("status", exc)
             return cleaned_data
 
     form = AccountingPeriodAdminForm

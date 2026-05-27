@@ -10,6 +10,7 @@ from django.db.models import Q, Sum
 
 from .accounts import Account, Entity
 from .periods import AccountingPeriod
+from apps.accounting.transition_rules import validate_journal_entry_status_transition
 
 
 class JournalEntry(models.Model):
@@ -34,6 +35,12 @@ class JournalEntry(models.Model):
 
     class Meta:
         ordering = ["-date", "-id"]
+        permissions = [
+            (
+                "post_soft_closed_journal_entries",
+                "Can post journal entries in soft-closed periods",
+            )
+        ]
 
     def __str__(self) -> str:
         return f"JE-{self.id or 'new'} {self.date} {self.status}"
@@ -64,13 +71,7 @@ class JournalEntry(models.Model):
     def clean(self) -> None:
         if self.pk:
             original_status = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
-            allowed_statuses = {original_status}
-            if original_status == self.Status.DRAFT:
-                allowed_statuses.add(self.Status.POSTED)
-            elif original_status == self.Status.POSTED:
-                allowed_statuses.add(self.Status.REVERSED)
-            if self.status not in {status for status in allowed_statuses if status is not None}:
-                raise ValidationError("Journal entry status may only be changed through the posting or reversal services.")
+            validate_journal_entry_status_transition(original_status=original_status, desired_status=self.status)
         elif self.status not in {self.Status.DRAFT, self.Status.POSTED}:
             raise ValidationError("Journal entries must be created as drafts or posted entries.")
         if self.pk and self.lines.exists():

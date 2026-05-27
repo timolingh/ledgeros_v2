@@ -12,6 +12,7 @@ from django.utils import timezone
 from apps.accounting.models import Account, AccountingPeriod, JournalEntry, JournalLine
 from apps.accounting.services.audit import audit_success
 from apps.accounting.services.entities import get_default_entity
+from apps.accounting.transition_rules import validate_journal_entry_status_transition
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,7 @@ def post_journal_entry(*, entry: JournalEntry, user=None, source: str | None = N
     entry = JournalEntry.objects.select_for_update().get(pk=entry.pk)
     if entry.status != JournalEntry.Status.DRAFT:
         raise ValidationError("Only draft journal entries can be posted.")
+    validate_journal_entry_status_transition(original_status=entry.status, desired_status=JournalEntry.Status.POSTED)
     period = resolve_period_for_posting(entry.entity, entry.date)
     period.assert_posting_allowed(allow_soft_closed=allow_soft_closed)
     entry.period = period
