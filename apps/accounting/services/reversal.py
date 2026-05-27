@@ -9,6 +9,7 @@ from django.utils import timezone
 from apps.accounting.models import JournalEntry, JournalLine
 from apps.accounting.services.audit import audit_success
 from apps.accounting.services.posting import JournalLineInput, create_and_post_journal_entry
+from apps.accounting.transition_rules import validate_journal_entry_status_transition
 
 
 @transaction.atomic
@@ -18,6 +19,7 @@ def reverse_journal_entry(*, entry: JournalEntry, reversal_date: date, user=None
         raise ValidationError("Only posted journal entries can be reversed.")
     if original.reversal_of is not None:
         raise ValidationError("Reversal entries cannot be reversed.")
+    validate_journal_entry_status_transition(original_status=original.status, desired_status=JournalEntry.Status.REVERSED)
     reversal_lines = [
         JournalLineInput(
             account_code=line.account.account_code,

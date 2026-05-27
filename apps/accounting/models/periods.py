@@ -6,6 +6,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from .accounts import Entity
+from apps.accounting.transition_rules import validate_accounting_period_status_transition
 
 
 class AccountingPeriod(models.Model):
@@ -48,8 +49,7 @@ class AccountingPeriod(models.Model):
             raise ValidationError("Soft-closed accounting periods require elevated approval for posting.")
 
     def mark_soft_closed(self) -> None:
-        if self.status == self.Status.LOCKED:
-            raise ValidationError("Locked periods cannot be soft-closed.")
+        validate_accounting_period_status_transition(original_status=self.status, desired_status=self.Status.SOFT_CLOSED)
         self.status = self.Status.SOFT_CLOSED
         self.closed_at = timezone.now()
         self.save(update_fields=["status", "closed_at", "updated_at"])

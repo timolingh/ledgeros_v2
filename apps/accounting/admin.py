@@ -9,6 +9,7 @@ from apps.accounting.services.entities import get_default_entity
 from apps.accounting.services import change_period_status, post_journal_entry, reverse_journal_entry
 from apps.accounting.services.posting import JournalLineInput, assert_line_inputs_balanced, resolve_period_for_posting, update_draft_journal_entry
 from apps.accounting.services.writes import save_account, save_accounting_period
+from apps.accounting.transition_rules import validate_accounting_period_status_transition, validate_journal_entry_status_transition
 
 
 @admin.register(Account)
@@ -72,11 +73,33 @@ class JournalEntryAdminForm(forms.ModelForm):
 
     def clean(self):
         cleaned_data = super().clean()
-        if self.errors or not self.instance.pk:
+        if self.errors:
             return cleaned_data
 
         desired_status = cleaned_data.get("status", self.instance.status)
+        if not self.instance.pk:
+            if desired_status == JournalEntry.Status.POSTED:
+                try:
+                    period = cleaned_data.get("period")
+                    if period is None:
+                        entry_date = cleaned_data.get("date")
+                        if entry_date is None:
+                            return cleaned_data
+                        period = resolve_period_for_posting(get_default_entity(), entry_date)
+                    period.assert_posting_allowed(allow_soft_closed=True)
+                except ValidationError as exc:
+                    self.add_error("status", exc)
+            elif desired_status == JournalEntry.Status.REVERSED:
+                self.add_error("status", ValidationError("New journal entries must be created as drafts or posted entries."))
+            return cleaned_data
+
         original_status = JournalEntry.objects.filter(pk=self.instance.pk).values_list("status", flat=True).first()
+        try:
+            validate_journal_entry_status_transition(original_status=original_status, desired_status=desired_status)
+        except ValidationError as exc:
+            self.add_error("status", exc)
+            return cleaned_data
+
         if desired_status == original_status:
             return cleaned_data
 
@@ -184,10 +207,10 @@ class AccountingPeriodAdmin(admin.ModelAdmin):
                 return cleaned_data
 
             desired_status = cleaned_data.get("status", self.instance.status)
-            if desired_status == self.instance.status:
-                return cleaned_data
-            if desired_status == AccountingPeriod.Status.SOFT_CLOSED and self.instance.status == AccountingPeriod.Status.LOCKED:
-                self.add_error("status", ValidationError("Locked periods cannot be soft-closed."))
+            try:
+                validate_accounting_period_status_transition(original_status=self.instance.status, desired_status=desired_status)
+            except ValidationError as exc:
+                self.add_error("status", exc)
             return cleaned_data
 
     form = AccountingPeriodAdminForm

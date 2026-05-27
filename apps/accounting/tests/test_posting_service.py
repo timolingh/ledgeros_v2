@@ -6,13 +6,14 @@ from django.contrib import admin as django_admin
 from django.core.exceptions import ValidationError
 from django.forms.models import inlineformset_factory
 from django.contrib.auth import get_user_model
-from django.test import RequestFactory
+from django.test import Client, RequestFactory
 
 from apps.accounting.admin import AccountAdmin, AccountingPeriodAdmin, JournalEntryAdmin, JournalLineInlineFormSet
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, JournalLine
 from apps.accounting.services import JournalLineInput, create_accounting_period, create_and_post_journal_entry, create_draft_journal_entry, post_journal_entry, update_draft_journal_entry
 from apps.accounting.services.chart_import import import_chart_of_accounts
 from apps.accounting.services.entities import get_default_entity
+from apps.accounting.transition_rules import validate_accounting_period_status_transition, validate_journal_entry_status_transition
 
 
 @pytest.fixture
@@ -181,6 +182,27 @@ def test_direct_status_change_draft_to_reversed_is_rejected(coa):
 
     with pytest.raises(ValidationError):
         draft.full_clean()
+
+
+@pytest.mark.django_db
+def test_journal_entry_transition_matrix(coa):
+    validate_journal_entry_status_transition(original_status=JournalEntry.Status.DRAFT, desired_status=JournalEntry.Status.POSTED)
+    validate_journal_entry_status_transition(original_status=JournalEntry.Status.POSTED, desired_status=JournalEntry.Status.REVERSED)
+    validate_journal_entry_status_transition(original_status=JournalEntry.Status.REVERSED, desired_status=JournalEntry.Status.REVERSED)
+
+    with pytest.raises(ValidationError):
+        validate_journal_entry_status_transition(original_status=JournalEntry.Status.DRAFT, desired_status=JournalEntry.Status.REVERSED)
+
+
+@pytest.mark.django_db
+def test_accounting_period_transition_matrix():
+    validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.OPEN, desired_status=AccountingPeriod.Status.SOFT_CLOSED)
+    validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.SOFT_CLOSED, desired_status=AccountingPeriod.Status.LOCKED)
+    validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.LOCKED, desired_status=AccountingPeriod.Status.OPEN)
+    validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.OPEN, desired_status=AccountingPeriod.Status.OPEN)
+
+    with pytest.raises(ValidationError):
+        validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.LOCKED, desired_status=AccountingPeriod.Status.SOFT_CLOSED)
 
 
 @pytest.mark.django_db
@@ -472,27 +494,146 @@ def test_journal_entry_admin_status_dropdown_posts_entry(coa):
 
 
 @pytest.mark.django_db
+def test_journal_entry_admin_change_view_posts_entry(coa):
+    _period = create_accounting_period(start_date=date(2026, 2, 1), end_date=date(2026, 2, 28), name="FY2026-02")
+    entry = create_draft_journal_entry(
+        entry_date=date(2026, 2, 10),
+        description="Admin draft",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+
+    user = get_user_model().objects.create_superuser(username="admin-client-post", password="password", email="admin-client-post@example.com")
+    client = Client()
+    client.force_login(user)
+
+    formset_class = inlineformset_factory(JournalEntry, JournalLine, fields=("account", "side", "amount", "description"), extra=0, formset=JournalLineInlineFormSet)
+    formset = formset_class(instance=entry, prefix="lines")
+    data = {
+        "date": str(entry.date),
+        "description": entry.description,
+        "status": JournalEntry.Status.POSTED,
+        "source": entry.source,
+        "period": str(entry.period_id),
+        "lines-TOTAL_FORMS": str(formset.total_form_count()),
+        "lines-INITIAL_FORMS": str(formset.initial_form_count()),
+        "lines-MIN_NUM_FORMS": "0",
+        "lines-MAX_NUM_FORMS": "1000",
+    }
+    for index, inline_form in enumerate(formset.forms):
+        data[f"lines-{index}-account"] = str(inline_form.instance.account_id)
+        data[f"lines-{index}-side"] = inline_form.instance.side
+        data[f"lines-{index}-amount"] = str(inline_form.instance.amount)
+        data[f"lines-{index}-description"] = inline_form.instance.description
+        data[f"lines-{index}-id"] = str(inline_form.instance.pk)
+        data[f"lines-{index}-journal_entry"] = str(entry.pk)
+
+    response = client.post(f"/admin/accounting/journalentry/{entry.pk}/change/", data, HTTP_HOST="localhost")
+    assert response.status_code == 302
+    entry.refresh_from_db()
+    assert entry.status == JournalEntry.Status.POSTED
+    assert entry.posted_at is not None
+
+
+@pytest.mark.django_db
+def test_journal_entry_admin_add_view_can_create_posted_entry(coa):
+    create_accounting_period(start_date=date(2026, 4, 1), end_date=date(2026, 4, 30), name="FY2026-04")
+    user = get_user_model().objects.create_superuser(username="admin-client-add", password="password", email="admin-client-add@example.com")
+    client = Client()
+    client.force_login(user)
+
+    draft_lines = [
+        JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+        JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+    ]
+    response = client.post(
+        "/admin/accounting/journalentry/add/",
+        {
+            "date": "2026-04-10",
+            "description": "Admin add posted",
+            "status": JournalEntry.Status.POSTED,
+            "source": "manual",
+            "period": "",
+            "lines-TOTAL_FORMS": "2",
+            "lines-INITIAL_FORMS": "0",
+            "lines-MIN_NUM_FORMS": "0",
+            "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-account": str(Account.objects.get(account_code="1000").pk),
+            "lines-0-side": draft_lines[0].side,
+            "lines-0-amount": str(draft_lines[0].amount),
+            "lines-0-description": "",
+            "lines-1-account": str(Account.objects.get(account_code="4000").pk),
+            "lines-1-side": draft_lines[1].side,
+            "lines-1-amount": str(draft_lines[1].amount),
+            "lines-1-description": "",
+        },
+        HTTP_HOST="localhost",
+    )
+
+    assert response.status_code == 302
+    entry = JournalEntry.objects.get(description="Admin add posted")
+    assert entry.status == JournalEntry.Status.POSTED
+    assert entry.posted_at is not None
+
+
+@pytest.mark.django_db
+def test_accounting_period_admin_change_view_changes_status(coa):
+    period = create_accounting_period(start_date=date(2026, 3, 1), end_date=date(2026, 3, 31), name="FY2026-03")
+    user = get_user_model().objects.create_superuser(username="admin-period-client", password="password", email="admin-period-client@example.com")
+    client = Client()
+    client.force_login(user)
+
+    response = client.post(
+        f"/admin/accounting/accountingperiod/{period.pk}/change/",
+        {
+            "name": period.name,
+            "start_date": str(period.start_date),
+            "end_date": str(period.end_date),
+            "status": AccountingPeriod.Status.SOFT_CLOSED,
+        },
+        HTTP_HOST="localhost",
+    )
+
+    assert response.status_code == 302
+    period.refresh_from_db()
+    assert period.status == AccountingPeriod.Status.SOFT_CLOSED
+    assert period.closed_at is not None
+
+
+@pytest.mark.django_db
 def test_journal_entry_admin_status_dropdown_rejects_locked_period(coa):
     period = create_accounting_period(start_date=date(2026, 5, 28), end_date=date(2026, 5, 28), name="Locked Day")
     period.mark_locked()
     entry = JournalEntry.objects.create(entity=coa, date=period.start_date, description="Admin draft", period=period, status=JournalEntry.Status.DRAFT, source="manual")
-    request = RequestFactory().get("/admin/")
-    request.user = get_user_model().objects.create_superuser(username="admin-post-locked", password="password", email="admin-post-locked@example.com")
-    admin_instance = JournalEntryAdmin(JournalEntry, django_admin.site)
-    form_class = admin_instance.get_form(request, obj=entry)
-    form = form_class(
-        data={
-            "date": str(entry.date),
-            "description": entry.description,
-            "status": JournalEntry.Status.POSTED,
-            "source": entry.source,
-            "period": str(entry.period_id),
-        },
-        instance=entry,
-    )
+    user = get_user_model().objects.create_superuser(username="admin-post-locked", password="password", email="admin-post-locked@example.com")
+    client = Client()
+    client.force_login(user)
+    formset_class = inlineformset_factory(JournalEntry, JournalLine, fields=("account", "side", "amount", "description"), extra=0, formset=JournalLineInlineFormSet)
+    formset = formset_class(instance=entry, prefix="lines")
+    data = {
+        "date": str(entry.date),
+        "description": entry.description,
+        "status": JournalEntry.Status.POSTED,
+        "source": entry.source,
+        "period": str(entry.period_id),
+        "lines-TOTAL_FORMS": str(formset.total_form_count()),
+        "lines-INITIAL_FORMS": str(formset.initial_form_count()),
+        "lines-MIN_NUM_FORMS": "0",
+        "lines-MAX_NUM_FORMS": "1000",
+    }
+    for index, inline_form in enumerate(formset.forms):
+        data[f"lines-{index}-account"] = str(inline_form.instance.account_id)
+        data[f"lines-{index}-side"] = inline_form.instance.side
+        data[f"lines-{index}-amount"] = str(inline_form.instance.amount)
+        data[f"lines-{index}-description"] = inline_form.instance.description
+        data[f"lines-{index}-id"] = str(inline_form.instance.pk)
+        data[f"lines-{index}-journal_entry"] = str(entry.pk)
 
-    assert not form.is_valid()
-    assert "Locked accounting periods reject postings." in str(form.errors["status"])
+    response = client.post(f"/admin/accounting/journalentry/{entry.pk}/change/", data, HTTP_HOST="localhost")
+    assert response.status_code == 200
+    assert "Locked accounting periods reject postings." in response.content.decode()
 
 
 @pytest.mark.django_db
