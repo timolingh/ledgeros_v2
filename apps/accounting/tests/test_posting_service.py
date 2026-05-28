@@ -11,6 +11,7 @@ from django.test import Client, RequestFactory
 
 from apps.accounting.admin import AccountAdmin, AccountingPeriodAdmin, JournalEntryAdmin, JournalLineInlineFormSet
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, JournalLine
+from apps.accounting.selectors import account_balance
 from apps.accounting.services import JournalLineInput, create_accounting_period, create_and_post_journal_entry, create_draft_journal_entry, post_journal_entry, reverse_journal_entry, update_draft_journal_entry
 from apps.accounting.services.chart_import import import_chart_of_accounts
 from apps.accounting.services.entities import get_default_entity
@@ -68,7 +69,7 @@ def test_draft_does_not_affect_balances(coa):
         ],
     )
     assert draft.status == JournalEntry.Status.DRAFT
-    assert Account.objects.get(account_code="1000").posted_balance() == 0
+    assert account_balance(Account.objects.get(account_code="1000")) == 0
 
 
 @pytest.mark.django_db
@@ -298,8 +299,8 @@ def test_post_balanced_entry_changes_balances(coa):
         ],
     )
     assert entry.status == JournalEntry.Status.POSTED
-    assert Account.objects.get(account_code="1000").posted_balance() == 100
-    assert Account.objects.get(account_code="4000").posted_balance() == 100
+    assert account_balance(Account.objects.get(account_code="1000")) == 100
+    assert account_balance(Account.objects.get(account_code="4000")) == 100
     assert AuditLog.objects.filter(action="journal_entry_posted", record_id=str(entry.pk)).exists()
 
 

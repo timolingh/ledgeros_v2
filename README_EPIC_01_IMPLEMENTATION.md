@@ -15,13 +15,15 @@ It uses the stronger structure discussed after the first implementation: project
 - Posting service with balanced debit/credit enforcement
 - Locked/closed period validation
 - Reversal service that creates a posted reversing entry and marks the original as reversed
-- Ledger-affecting balance logic that includes posted entries and reversed originals; draft entries are excluded
+- Ledger-affecting balance selectors that include posted entries and reversed originals; draft entries are excluded
 - Draft entries may be updated before posting; posted and reversed entries are not destructively editable
 - Corrections happen through reversal plus a new entry, not by editing posted accounting facts
 - Immutable audit logs for successful material accounting actions only
 - Thin DRF endpoints for core Epic 1 resources, using Django/DRF default authentication
 - Docker Compose for local app + PostgreSQL runtime
 - Unit/integration tests for core accounting behavior
+- `docs/accounting-core-invariants.md` as the normative ledger rules document
+- `scripts/check.sh` as the repeatable Docker validation command
 
 ## Structure
 
@@ -64,6 +66,10 @@ apps/
     management/commands/import_coa.py
     migrations/0001_initial.py
     tests/
+docs/
+  accounting-core-invariants.md
+scripts/
+  check.sh
 ```
 
 ## Explicit domain assumptions
@@ -97,6 +103,14 @@ docker compose up web
 Open the app at `http://localhost:8000/admin/` or use the API at `http://localhost:8000/api/v1/`.
 
 ## Run tests
+
+Use the project validation script:
+
+```bash
+./scripts/check.sh
+```
+
+The script runs the same Docker commands explicitly:
 
 ```bash
 docker compose run --rm web python manage.py check
@@ -149,10 +163,10 @@ View account balances in Python:
 
 ```bash
 docker compose run --rm -T web python manage.py shell <<'PY'
-from apps.accounting.models import Account
+from apps.accounting.selectors import trial_balance
 
-for account in Account.objects.order_by('account_code'):
-    print(account.account_code, account.name, account.posted_balance())
+for row in trial_balance():
+    print(row["account_code"], row["name"], row["balance"])
 PY
 ```
 
@@ -162,7 +176,7 @@ Or fetch balances through the Epic 1 API:
 curl -u <username>:<password> http://localhost:8000/api/v1/accounts/ | jq
 ```
 
-The account payload includes `posted_balance` for each account.
+The account payload includes `posted_balance` for each account. That field is computed through the balance selector layer.
 
 Reverse the last posted entry:
 
@@ -199,6 +213,10 @@ These are thin Epic 1 core endpoints, not the Epic 5 external event ingestion AP
 - `GET /api/v1/audit-logs/`; audit logs are read-only.
 
 DRF uses Django session/basic authentication and requires authenticated users by default. Full MVP role enforcement belongs to Epic 6.
+
+## Ledger invariants
+
+Read `docs/accounting-core-invariants.md` before changing ledger behavior. It defines the service-layer, posting, reversal, period, balance, and audit rules that future epics must preserve.
 
 ## Manual acceptance checks
 

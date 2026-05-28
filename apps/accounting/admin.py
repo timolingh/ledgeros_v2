@@ -7,6 +7,7 @@ from django.forms.models import BaseInlineFormSet
 from django.utils import timezone
 
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, JournalEntry, JournalLine
+from apps.accounting.selectors import account_balance
 from apps.accounting.services import change_period_status, post_journal_entry, reverse_journal_entry
 from apps.accounting.services.entities import get_default_entity
 from apps.accounting.services.posting import JournalLineInput, assert_line_inputs_balanced, update_draft_journal_entry
@@ -23,7 +24,7 @@ class AccountAdmin(admin.ModelAdmin):
 
     @admin.display(description="Posted balance")
     def posted_balance(self, obj: Account):
-        return obj.posted_balance()
+        return account_balance(obj)
 
     def save_model(self, request, obj, form, change):
         save_account(

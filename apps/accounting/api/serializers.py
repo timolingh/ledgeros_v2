@@ -5,6 +5,7 @@ from datetime import date
 from rest_framework import serializers
 
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, JournalLine
+from apps.accounting.selectors import account_balance
 from apps.accounting.services import JournalLineInput, post_journal_entry, reverse_journal_entry, update_draft_journal_entry
 from apps.accounting.services.entities import get_default_entity
 from apps.accounting.services.posting import create_draft_journal_entry
@@ -27,7 +28,7 @@ class AccountSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "posted_balance", "created_at", "updated_at"]
 
     def get_posted_balance(self, obj: Account) -> str:
-        return str(obj.posted_balance())
+        return str(account_balance(obj))
 
     def create(self, validated_data):
         return save_account(entity=get_default_entity(), **validated_data)

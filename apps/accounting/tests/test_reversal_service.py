@@ -4,6 +4,7 @@ import pytest
 from django.core.exceptions import ValidationError
 
 from apps.accounting.models import Account, AuditLog, JournalEntry
+from apps.accounting.selectors import account_balance
 from apps.accounting.services import JournalLineInput, create_accounting_period, create_and_post_journal_entry, reverse_journal_entry
 from apps.accounting.services.chart_import import import_chart_of_accounts
 from apps.accounting.services.entities import get_default_entity
@@ -46,8 +47,8 @@ def test_reversal_offsets_posted_balances(accounting_ready):
     assert reversal.status == JournalEntry.Status.POSTED
     assert reversal.reversal_of == entry
     assert entry.lines.count() == 2
-    assert Account.objects.get(account_code="1000").posted_balance() == 0
-    assert Account.objects.get(account_code="4000").posted_balance() == 0
+    assert account_balance(Account.objects.get(account_code="1000")) == 0
+    assert account_balance(Account.objects.get(account_code="4000")) == 0
     assert AuditLog.objects.filter(action="journal_entry_reversed", record_id=str(entry.pk)).exists()
 
 
