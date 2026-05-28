@@ -211,14 +211,17 @@ def test_journal_entry_transition_matrix(coa):
 
 @pytest.mark.django_db
 def test_accounting_period_transition_matrix():
-    validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.OPEN, desired_status=AccountingPeriod.Status.SOFT_CLOSED)
-    validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.SOFT_CLOSED, desired_status=AccountingPeriod.Status.LOCKED)
-    validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.LOCKED, desired_status=AccountingPeriod.Status.OPEN)
+    validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.OPEN, desired_status=AccountingPeriod.Status.CLOSED)
+    validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.CLOSED, desired_status=AccountingPeriod.Status.OPEN)
+    validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.CLOSED, desired_status=AccountingPeriod.Status.LOCKED)
+    validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.OPEN, desired_status=AccountingPeriod.Status.LOCKED)
     validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.OPEN, desired_status=AccountingPeriod.Status.OPEN)
 
     with pytest.raises(ValidationError):
-        validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.LOCKED, desired_status=AccountingPeriod.Status.SOFT_CLOSED)
+        validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.LOCKED, desired_status=AccountingPeriod.Status.OPEN)
 
+    with pytest.raises(ValidationError):
+        validate_accounting_period_status_transition(original_status=AccountingPeriod.Status.LOCKED, desired_status=AccountingPeriod.Status.CLOSED)
 
 @pytest.mark.django_db
 def test_reversed_entries_cannot_be_edited(coa):
@@ -301,12 +304,12 @@ def test_post_balanced_entry_changes_balances(coa):
 
 
 @pytest.mark.django_db
-def test_soft_closed_period_rejects_posting(coa):
+def test_closed_period_rejects_posting(coa):
     period = create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
-    period.mark_soft_closed()
+    period.mark_closed()
     draft = create_draft_journal_entry(
         entry_date=date(2026, 5, 1),
-        description="Soft closed period entry",
+        description="Closed period entry",
         lines=[
             JournalLineInput(account_code="1000", side="debit", amount="100.00"),
             JournalLineInput(account_code="4000", side="credit", amount="100.00"),
@@ -317,22 +320,21 @@ def test_soft_closed_period_rejects_posting(coa):
 
 
 @pytest.mark.django_db
-def test_create_and_post_journal_entry_rejects_soft_closed_period_without_override(coa):
+def test_create_and_post_journal_entry_rejects_closed_period(coa):
     period = create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
-    period.mark_soft_closed()
+    period.mark_closed()
 
     with pytest.raises(ValidationError) as exc_info:
         create_and_post_journal_entry(
             entry_date=date(2026, 5, 1),
-            description="Soft closed period entry",
+            description="Closed period entry",
             lines=[
                 JournalLineInput(account_code="1000", side="debit", amount="100.00"),
                 JournalLineInput(account_code="4000", side="credit", amount="100.00"),
             ],
         )
 
-    assert "soft-closed accounting periods require elevated approval for posting" in str(exc_info.value).lower()
-
+    assert "closed accounting periods reject postings" in str(exc_info.value).lower()
 
 @pytest.mark.django_db
 def test_locked_period_rejects_posting(coa):
@@ -679,14 +681,14 @@ def test_accounting_period_admin_change_view_changes_status(coa):
             "name": period.name,
             "start_date": str(period.start_date),
             "end_date": str(period.end_date),
-            "status": AccountingPeriod.Status.SOFT_CLOSED,
+            "status": AccountingPeriod.Status.CLOSED,
         },
         HTTP_HOST="localhost",
     )
 
     assert response.status_code == 302
     period.refresh_from_db()
-    assert period.status == AccountingPeriod.Status.SOFT_CLOSED
+    assert period.status == AccountingPeriod.Status.CLOSED
     assert period.closed_at is not None
 
 
@@ -740,12 +742,12 @@ def test_journal_entry_admin_exposes_status_history_fields(coa):
 
 
 @pytest.mark.django_db
-def test_journal_entry_admin_actions_can_post_soft_closed_entries(coa):
+def test_journal_entry_admin_actions_reject_closed_period_entries(coa):
     period = create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
-    period.mark_soft_closed()
+    period.mark_closed()
     entry = create_draft_journal_entry(
         entry_date=date(2026, 5, 1),
-        description="Soft closed admin entry",
+        description="Closed admin entry",
         lines=[
             JournalLineInput(account_code="1000", side="debit", amount="100.00"),
             JournalLineInput(account_code="4000", side="credit", amount="100.00"),
@@ -753,23 +755,19 @@ def test_journal_entry_admin_actions_can_post_soft_closed_entries(coa):
     )
 
     request = RequestFactory().get("/admin/")
-    request.user = create_staff_user(
-        username="admin-post",
-        permissions=("post_soft_closed_journal_entries",),
-    )
+    request.user = create_staff_user(username="admin-post")
     admin_instance = JournalEntryAdmin(JournalEntry, django_admin.site)
 
-    admin_instance.post_selected_entries(request, JournalEntry.objects.filter(pk=entry.pk))
+    with pytest.raises(ValidationError, match="Closed accounting periods reject postings"):
+        admin_instance.post_selected_entries(request, JournalEntry.objects.filter(pk=entry.pk))
+
     entry.refresh_from_db()
-
-    assert entry.status == JournalEntry.Status.POSTED
-    assert entry.posted_at is not None
-
+    assert entry.status == JournalEntry.Status.DRAFT
 
 @pytest.mark.django_db
-def test_journal_entry_admin_change_view_rejects_soft_closed_posting_without_permission(coa):
+def test_journal_entry_admin_change_view_rejects_closed_posting(coa):
     period = create_accounting_period(start_date=date(2026, 2, 1), end_date=date(2026, 2, 28), name="FY2026-02")
-    period.mark_soft_closed()
+    period.mark_closed()
     entry = create_draft_journal_entry(
         entry_date=date(2026, 2, 10),
         description="Admin draft",
@@ -779,13 +777,7 @@ def test_journal_entry_admin_change_view_rejects_soft_closed_posting_without_per
         ],
     )
 
-    user = create_staff_user(username="admin-client-soft-closed")
-    user.user_permissions.set(
-        Permission.objects.filter(
-            content_type__app_label="accounting",
-            codename__in=("change_journalentry", "view_journalentry"),
-        )
-    )
+    user = create_staff_user(username="admin-client-closed", permissions=("change_journalentry", "view_journalentry"))
     client = Client()
     client.force_login(user)
 
@@ -812,15 +804,14 @@ def test_journal_entry_admin_change_view_rejects_soft_closed_posting_without_per
 
     response = client.post(f"/admin/accounting/journalentry/{entry.pk}/change/", data, HTTP_HOST="localhost")
     assert response.status_code == 200
-    assert "Soft-closed accounting periods require elevated approval for posting." in response.content.decode()
+    assert "Closed accounting periods reject postings." in response.content.decode()
     entry.refresh_from_db()
     assert entry.status == JournalEntry.Status.DRAFT
 
-
 @pytest.mark.django_db
-def test_journal_entry_admin_change_view_posts_soft_closed_entry_with_permission(coa):
+def test_journal_entry_admin_change_view_rejects_closed_posting_even_for_superuser(coa):
     period = create_accounting_period(start_date=date(2026, 2, 1), end_date=date(2026, 2, 28), name="FY2026-02")
-    period.mark_soft_closed()
+    period.mark_closed()
     entry = create_draft_journal_entry(
         entry_date=date(2026, 2, 10),
         description="Admin draft",
@@ -830,10 +821,7 @@ def test_journal_entry_admin_change_view_posts_soft_closed_entry_with_permission
         ],
     )
 
-    user = create_staff_user(
-        username="admin-client-soft-closed-post",
-        permissions=("change_journalentry", "view_journalentry", "post_soft_closed_journal_entries"),
-    )
+    user = get_user_model().objects.create_superuser(username="admin-client-closed-post", password="password", email="admin-client-closed-post@example.com")
     client = Client()
     client.force_login(user)
 
@@ -859,11 +847,10 @@ def test_journal_entry_admin_change_view_posts_soft_closed_entry_with_permission
         data[f"lines-{index}-journal_entry"] = str(entry.pk)
 
     response = client.post(f"/admin/accounting/journalentry/{entry.pk}/change/", data, HTTP_HOST="localhost")
-    assert response.status_code == 302
+    assert response.status_code == 200
+    assert "Closed accounting periods reject postings." in response.content.decode()
     entry.refresh_from_db()
-    assert entry.status == JournalEntry.Status.POSTED
-    assert entry.posted_at is not None
-
+    assert entry.status == JournalEntry.Status.DRAFT
 
 @pytest.mark.django_db
 def test_accounting_period_admin_actions_change_status(coa):
@@ -872,18 +859,20 @@ def test_accounting_period_admin_actions_change_status(coa):
     request.user = get_user_model().objects.create_superuser(username="admin-period", password="password", email="admin-period@example.com")
     admin_instance = AccountingPeriodAdmin(AccountingPeriod, django_admin.site)
 
-    admin_instance.mark_soft_closed(request, AccountingPeriod.objects.filter(pk=period.pk))
+    admin_instance.mark_closed(request, AccountingPeriod.objects.filter(pk=period.pk))
     period.refresh_from_db()
-    assert period.status == AccountingPeriod.Status.SOFT_CLOSED
-
-    admin_instance.mark_locked(request, AccountingPeriod.objects.filter(pk=period.pk))
-    period.refresh_from_db()
-    assert period.status == AccountingPeriod.Status.LOCKED
+    assert period.status == AccountingPeriod.Status.CLOSED
 
     admin_instance.mark_open(request, AccountingPeriod.objects.filter(pk=period.pk))
     period.refresh_from_db()
     assert period.status == AccountingPeriod.Status.OPEN
 
+    admin_instance.mark_locked(request, AccountingPeriod.objects.filter(pk=period.pk))
+    period.refresh_from_db()
+    assert period.status == AccountingPeriod.Status.LOCKED
+
+    with pytest.raises(ValidationError, match="Locked accounting periods cannot be reopened or otherwise changed"):
+        admin_instance.mark_open(request, AccountingPeriod.objects.filter(pk=period.pk))
 
 @pytest.mark.django_db
 def test_accounting_period_admin_status_dropdown_changes_status(coa):
@@ -897,14 +886,14 @@ def test_accounting_period_admin_status_dropdown_changes_status(coa):
             "name": period.name,
             "start_date": period.start_date,
             "end_date": period.end_date,
-            "status": AccountingPeriod.Status.SOFT_CLOSED,
+            "status": AccountingPeriod.Status.CLOSED,
         },
     )
 
     admin_instance.save_model(request, period, form, change=True)
     period.refresh_from_db()
 
-    assert period.status == AccountingPeriod.Status.SOFT_CLOSED
+    assert period.status == AccountingPeriod.Status.CLOSED
     assert period.closed_at is not None
 
 

@@ -123,13 +123,13 @@ def update_draft_journal_entry(*, entry: JournalEntry, entry_date: date | None =
 
 
 @transaction.atomic
-def post_journal_entry(*, entry: JournalEntry, user=None, source: str | None = None, allow_soft_closed: bool = False) -> JournalEntry:
+def post_journal_entry(*, entry: JournalEntry, user=None, source: str | None = None) -> JournalEntry:
     entry = JournalEntry.objects.select_for_update().get(pk=entry.pk)
     if entry.status != JournalEntry.Status.DRAFT:
         raise ValidationError("Only draft journal entries can be posted.")
     validate_journal_entry_status_transition(original_status=entry.status, desired_status=JournalEntry.Status.POSTED)
     period = resolve_period_for_posting(entry.entity, entry.date)
-    period.assert_posting_allowed(allow_soft_closed=allow_soft_closed)
+    period.assert_posting_allowed()
     entry.period = period
     entry.assert_balanced()
     entry.status = JournalEntry.Status.POSTED
@@ -146,6 +146,6 @@ def post_journal_entry(*, entry: JournalEntry, user=None, source: str | None = N
 
 
 @transaction.atomic
-def create_and_post_journal_entry(*, entry_date: date, description: str, lines: Iterable[JournalLineInput], created_by=None, source: str = "manual", allow_soft_closed: bool = False) -> JournalEntry:
+def create_and_post_journal_entry(*, entry_date: date, description: str, lines: Iterable[JournalLineInput], created_by=None, source: str = "manual") -> JournalEntry:
     entry = create_draft_journal_entry(entry_date=entry_date, description=description, lines=lines, created_by=created_by, source=source)
-    return post_journal_entry(entry=entry, user=created_by, source=source, allow_soft_closed=allow_soft_closed)
+    return post_journal_entry(entry=entry, user=created_by, source=source)

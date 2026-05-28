@@ -21,5 +21,11 @@ def validate_accounting_period_status_transition(*, original_status: str, desire
     if desired_status == original_status:
         return
 
-    if original_status == "locked" and desired_status == "soft_closed":
-        raise ValidationError("Locked periods cannot be soft-closed.")
+    allowed_transitions = {
+        "open": {"closed", "locked"},
+        "closed": {"open", "locked"},
+        "locked": set(),
+    }
+
+    if desired_status not in allowed_transitions.get(original_status, set()):
+        raise ValidationError("Locked accounting periods cannot be reopened or otherwise changed.")

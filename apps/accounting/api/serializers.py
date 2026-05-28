@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import date
 
-from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, JournalLine
@@ -154,8 +153,6 @@ class JournalEntryWriteSerializer(serializers.Serializer):
 
 
 class PostJournalEntrySerializer(serializers.Serializer):
-    allow_soft_closed = serializers.BooleanField(required=False, default=False)
-
     def save(self, **kwargs):
         request = self.context.get("request")
         user = getattr(request, "user", None)
@@ -163,14 +160,12 @@ class PostJournalEntrySerializer(serializers.Serializer):
             entry=self.context["entry"],
             user=user if getattr(user, "is_authenticated", False) else None,
             source="api",
-            allow_soft_closed=self.validated_data.get("allow_soft_closed", False),
         )
 
 
 class ReverseJournalEntrySerializer(serializers.Serializer):
     reversal_date = serializers.DateField(required=False)
     description = serializers.CharField(required=False, allow_blank=True)
-    allow_soft_closed = serializers.BooleanField(required=False, default=False)
 
     def save(self, **kwargs):
         request = self.context.get("request")
@@ -181,7 +176,6 @@ class ReverseJournalEntrySerializer(serializers.Serializer):
             user=user if getattr(user, "is_authenticated", False) else None,
             source="api",
             description=self.validated_data.get("description") or None,
-            allow_soft_closed=self.validated_data.get("allow_soft_closed", False),
         )
 
 
