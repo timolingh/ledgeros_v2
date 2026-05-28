@@ -23,8 +23,8 @@ def change_period_status(*, period: AccountingPeriod, status: str, user=None, so
         raise ValidationError(f"Unsupported accounting period status: {status}")
     before = period.status
     with transaction.atomic():
-        if status == AccountingPeriod.Status.SOFT_CLOSED:
-            period.mark_soft_closed()
+        if status == AccountingPeriod.Status.CLOSED:
+            period.mark_closed()
         elif status == AccountingPeriod.Status.LOCKED:
             period.mark_locked()
         elif status == AccountingPeriod.Status.OPEN:

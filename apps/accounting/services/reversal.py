@@ -13,7 +13,7 @@ from apps.accounting.transition_rules import validate_journal_entry_status_trans
 
 
 @transaction.atomic
-def reverse_journal_entry(*, entry: JournalEntry, reversal_date: date, user=None, source: str = "manual", description: str | None = None, allow_soft_closed: bool = False) -> JournalEntry:
+def reverse_journal_entry(*, entry: JournalEntry, reversal_date: date, user=None, source: str = "manual", description: str | None = None) -> JournalEntry:
     original = JournalEntry.objects.select_for_update().get(pk=entry.pk)
     if original.status != JournalEntry.Status.POSTED:
         raise ValidationError("Only posted journal entries can be reversed.")
@@ -35,7 +35,6 @@ def reverse_journal_entry(*, entry: JournalEntry, reversal_date: date, user=None
         lines=reversal_lines,
         created_by=user,
         source=source,
-        allow_soft_closed=allow_soft_closed,
     )
     reversal.reversal_of = original
     reversal.save(update_fields=["reversal_of", "updated_at"])

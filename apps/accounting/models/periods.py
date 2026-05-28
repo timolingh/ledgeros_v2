@@ -5,14 +5,14 @@ from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 
-from .accounts import Entity
 from apps.accounting.transition_rules import validate_accounting_period_status_transition
+from .accounts import Entity
 
 
 class AccountingPeriod(models.Model):
     class Status(models.TextChoices):
         OPEN = "open", "Open"
-        SOFT_CLOSED = "soft_closed", "Soft closed"
+        CLOSED = "closed", "Closed"
         LOCKED = "locked", "Locked"
 
     entity = models.ForeignKey(Entity, on_delete=models.PROTECT, related_name="periods")
@@ -42,23 +42,25 @@ class AccountingPeriod(models.Model):
     def find_for_date(cls, entity: Entity, entry_date):
         return cls.objects.filter(entity=entity, start_date__lte=entry_date, end_date__gte=entry_date).order_by("start_date").first()
 
-    def assert_posting_allowed(self, *, allow_soft_closed: bool = False) -> None:
+    def assert_posting_allowed(self) -> None:
+        if self.status == self.Status.CLOSED:
+            raise ValidationError("Closed accounting periods reject postings.")
         if self.status == self.Status.LOCKED:
             raise ValidationError("Locked accounting periods reject postings.")
-        if self.status == self.Status.SOFT_CLOSED and not allow_soft_closed:
-            raise ValidationError("Soft-closed accounting periods require elevated approval for posting.")
 
-    def mark_soft_closed(self) -> None:
-        validate_accounting_period_status_transition(original_status=self.status, desired_status=self.Status.SOFT_CLOSED)
-        self.status = self.Status.SOFT_CLOSED
+    def mark_closed(self) -> None:
+        validate_accounting_period_status_transition(original_status=self.status, desired_status=self.Status.CLOSED)
+        self.status = self.Status.CLOSED
         self.closed_at = timezone.now()
         self.save(update_fields=["status", "closed_at", "updated_at"])
 
     def mark_locked(self) -> None:
+        validate_accounting_period_status_transition(original_status=self.status, desired_status=self.Status.LOCKED)
         self.status = self.Status.LOCKED
         self.locked_at = timezone.now()
         self.save(update_fields=["status", "locked_at", "updated_at"])
 
     def reopen(self) -> None:
+        validate_accounting_period_status_transition(original_status=self.status, desired_status=self.Status.OPEN)
         self.status = self.Status.OPEN
         self.save(update_fields=["status", "updated_at"])

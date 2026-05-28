@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import date
 
-from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, JournalLine
+from apps.accounting.selectors import account_balance
 from apps.accounting.services import JournalLineInput, post_journal_entry, reverse_journal_entry, update_draft_journal_entry
 from apps.accounting.services.entities import get_default_entity
 from apps.accounting.services.posting import create_draft_journal_entry
@@ -28,13 +28,21 @@ class AccountSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "posted_balance", "created_at", "updated_at"]
 
     def get_posted_balance(self, obj: Account) -> str:
-        return str(obj.posted_balance())
+        return str(account_balance(obj))
 
     def create(self, validated_data):
         return save_account(entity=get_default_entity(), **validated_data)
 
-    def update(self, instance, validated_data):
-        return save_account(account=instance, entity=instance.entity, **validated_data)
+    def update(self, instance: Account, validated_data):
+        return save_account(
+            account=instance,
+            entity=instance.entity,
+            account_code=validated_data.get("account_code", instance.account_code),
+            name=validated_data.get("name", instance.name),
+            type=validated_data.get("type", instance.type),
+            normal_balance=validated_data.get("normal_balance", instance.normal_balance),
+            is_active=validated_data.get("is_active", instance.is_active),
+        )
 
 
 class AccountingPeriodSerializer(serializers.ModelSerializer):
@@ -43,8 +51,14 @@ class AccountingPeriodSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "start_date", "end_date", "status", "closed_at", "locked_at", "created_at", "updated_at"]
         read_only_fields = ["id", "status", "closed_at", "locked_at", "created_at", "updated_at"]
 
-    def update(self, instance, validated_data):
-        return save_accounting_period(period=instance, entity=instance.entity, **validated_data)
+    def update(self, instance: AccountingPeriod, validated_data):
+        return save_accounting_period(
+            period=instance,
+            entity=instance.entity,
+            start_date=validated_data.get("start_date", instance.start_date),
+            end_date=validated_data.get("end_date", instance.end_date),
+            name=validated_data.get("name", instance.name),
+        )
 
 
 class JournalLineSerializer(serializers.ModelSerializer):
@@ -106,12 +120,20 @@ class JournalEntrySerializer(serializers.ModelSerializer):
 
 
 class JournalEntryWriteSerializer(serializers.Serializer):
-    date = serializers.DateField()
-    description = serializers.CharField()
+    date = serializers.DateField(required=False)
+    description = serializers.CharField(required=False)
     source = serializers.CharField(required=False, default="manual")
-    lines = JournalLineInputSerializer(many=True)
+    lines = JournalLineInputSerializer(many=True, required=False)
 
     def validate(self, attrs):
+        if self.instance is None:
+            missing = [field for field in ("date", "description", "lines") if field not in attrs]
+            if missing:
+                raise serializers.ValidationError({field: "This field is required." for field in missing})
+
+        if "lines" not in attrs:
+            return attrs
+
         lines = attrs.get("lines", [])
         if len(lines) < 2:
             raise serializers.ValidationError({"lines": "A journal entry requires at least two lines."})
@@ -127,7 +149,7 @@ class JournalEntryWriteSerializer(serializers.Serializer):
         return attrs
 
     def _line_inputs(self) -> list[JournalLineInput]:
-        return [JournalLineInput(**line) for line in self.validated_data["lines"]]
+        return [JournalLineInput(**line) for line in self.validated_data.get("lines", [])]
 
     def create(self, validated_data):
         request = self.context.get("request")
@@ -154,8 +176,6 @@ class JournalEntryWriteSerializer(serializers.Serializer):
 
 
 class PostJournalEntrySerializer(serializers.Serializer):
-    allow_soft_closed = serializers.BooleanField(required=False, default=False)
-
     def save(self, **kwargs):
         request = self.context.get("request")
         user = getattr(request, "user", None)
@@ -163,14 +183,12 @@ class PostJournalEntrySerializer(serializers.Serializer):
             entry=self.context["entry"],
             user=user if getattr(user, "is_authenticated", False) else None,
             source="api",
-            allow_soft_closed=self.validated_data.get("allow_soft_closed", False),
         )
 
 
 class ReverseJournalEntrySerializer(serializers.Serializer):
     reversal_date = serializers.DateField(required=False)
     description = serializers.CharField(required=False, allow_blank=True)
-    allow_soft_closed = serializers.BooleanField(required=False, default=False)
 
     def save(self, **kwargs):
         request = self.context.get("request")
@@ -181,7 +199,6 @@ class ReverseJournalEntrySerializer(serializers.Serializer):
             user=user if getattr(user, "is_authenticated", False) else None,
             source="api",
             description=self.validated_data.get("description") or None,
-            allow_soft_closed=self.validated_data.get("allow_soft_closed", False),
         )
 
 

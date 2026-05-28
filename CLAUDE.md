@@ -7,6 +7,7 @@ Before coding:
 - Identify whether the change affects ledger entries, reports, balances, payments, invoices, reconciliations, taxes, 
 owner statements, tenant ledgers, or audit trails.
 - If accounting treatment is ambiguous, stop and ask.
+- Before changing ledger behavior, read `docs/accounting-core-invariants.md` and keep code, tests, and docs aligned with it.
 
 Simplicity:
 - Prefer explicit domain functions over generalized abstractions.
@@ -30,7 +31,7 @@ Goal-driven execution:
 ## Anti-Slop Engineering Principles
 
 1. **Run the code, not just the generator.**  
-   Generated code is not complete until the relevant runtime checks pass. For Django work, at minimum run `python manage.py check`, `python manage.py makemigrations --check --dry-run`, migrations, relevant management commands, and tests before claiming the task is done.
+   Generated code is not complete until the relevant runtime checks pass. For Django work, at minimum run `./scripts/check.sh` or its equivalent commands: `python manage.py check`, `python manage.py makemigrations --check --dry-run`, migrations, relevant management commands, and tests before claiming the task is done.
 
 2. **Preserve domain invariants in executable tests.**  
    Any business rule described in the PRD or epic must have a corresponding test. For accounting, this includes balanced journal entries, closed-period posting rejection, draft exclusion from balances, reversal behavior, audit-log creation, and immutability of posted entries.

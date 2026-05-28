@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models import Q, Sum
+from django.db.models import Q
 
 
 class Entity(models.Model):
@@ -87,12 +87,12 @@ class Account(models.Model):
             raise ValidationError({"normal_balance": f"{self.type} accounts must normally be {expected}."})
 
     def posted_balance(self) -> Decimal:
-        from .journals import JournalEntry, JournalLine
+        """Compatibility wrapper for callers that still ask the account directly.
 
-        aggregates = self.lines.filter(journal_entry__status__in=JournalEntry.ledger_affecting_statuses()).aggregate(
-            debits=Sum("amount", filter=Q(side=JournalLine.Side.DEBIT)),
-            credits=Sum("amount", filter=Q(side=JournalLine.Side.CREDIT)),
-        )
-        debits = aggregates["debits"] or Decimal("0.00")
-        credits = aggregates["credits"] or Decimal("0.00")
-        return debits - credits if self.normal_balance == type(self).NormalBalance.DEBIT else credits - debits
+        Balance calculation is owned by apps.accounting.selectors.balances so
+        reporting/read-model logic has one canonical implementation.
+        """
+
+        from apps.accounting.selectors.balances import account_balance
+
+        return account_balance(self)

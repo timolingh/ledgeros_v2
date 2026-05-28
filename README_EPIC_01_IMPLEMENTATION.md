@@ -10,18 +10,20 @@ It uses the stronger structure discussed after the first implementation: project
 - Split settings: `config/settings/base.py`, `local.py`, `test.py`, `production.py`
 - Hidden default entity for MVP
 - Chart of accounts model and YAML import
-- Accounting periods with `open`, `soft_closed`, and `locked` states
+- Accounting periods with `open`, `closed`, and `locked` states
 - Draft journal entries
 - Posting service with balanced debit/credit enforcement
-- Locked/soft-closed period validation
+- Locked/closed period validation
 - Reversal service that creates a posted reversing entry and marks the original as reversed
-- Ledger-affecting balance logic that includes posted entries and reversed originals; draft entries are excluded
+- Ledger-affecting balance selectors that include posted entries and reversed originals; draft entries are excluded
 - Draft entries may be updated before posting; posted and reversed entries are not destructively editable
 - Corrections happen through reversal plus a new entry, not by editing posted accounting facts
 - Immutable audit logs for successful material accounting actions only
 - Thin DRF endpoints for core Epic 1 resources, using Django/DRF default authentication
 - Docker Compose for local app + PostgreSQL runtime
 - Unit/integration tests for core accounting behavior
+- `docs/accounting-core-invariants.md` as the normative ledger rules document
+- `scripts/check.sh` as the repeatable Docker validation command
 
 ## Structure
 
@@ -64,6 +66,10 @@ apps/
     management/commands/import_coa.py
     migrations/0001_initial.py
     tests/
+docs/
+  accounting-core-invariants.md
+scripts/
+  check.sh
 ```
 
 ## Explicit domain assumptions
@@ -73,7 +79,7 @@ apps/
 - Only posted entries and reversed originals affect ledger balances; a reversing posted entry offsets the original.
 - Posted entries are not destructively editable. They must be reversed.
 - Reversal entries cannot be reversed; corrections are always made by reversing the original posted entry only.
-- Closed/locked behavior follows the PRD period lifecycle: open accepts postings, soft-closed requires explicit elevated allowance, locked rejects postings.
+- Closed/locked behavior follows the Epic 1 period lifecycle: open accepts postings; closed and locked reject postings.
 - This implementation logs successful accounting state changes only. Blocked/failed attempts raise validation errors but do not create audit rows.
 - Future-scoped checklist items that depend on later accounting features are intentionally excluded from the Epic 1 acceptance list rather than modeled as failing tests.
 - Epic 5 external accounting event ingestion, API client YAML auth, idempotency keys, and invoice/payment event APIs are intentionally not implemented here.
@@ -97,6 +103,14 @@ docker compose up web
 Open the app at `http://localhost:8000/admin/` or use the API at `http://localhost:8000/api/v1/`.
 
 ## Run tests
+
+Use the project validation script:
+
+```bash
+./scripts/check.sh
+```
+
+The script runs the same Docker commands explicitly:
 
 ```bash
 docker compose run --rm web python manage.py check
@@ -149,10 +163,10 @@ View account balances in Python:
 
 ```bash
 docker compose run --rm -T web python manage.py shell <<'PY'
-from apps.accounting.models import Account
+from apps.accounting.selectors import trial_balance
 
-for account in Account.objects.order_by('account_code'):
-    print(account.account_code, account.name, account.posted_balance())
+for row in trial_balance():
+    print(row["account_code"], row["name"], row["balance"])
 PY
 ```
 
@@ -162,7 +176,7 @@ Or fetch balances through the Epic 1 API:
 curl -u <username>:<password> http://localhost:8000/api/v1/accounts/ | jq
 ```
 
-The account payload includes `posted_balance` for each account.
+The account payload includes `posted_balance` for each account. That field is computed through the balance selector layer.
 
 Reverse the last posted entry:
 
@@ -189,16 +203,20 @@ PY
 These are thin Epic 1 core endpoints, not the Epic 5 external event ingestion API.
 
 - `GET /api/v1/entities/`
-- `GET/POST /api/v1/accounts/`
-- `GET/POST /api/v1/periods/`
-- `POST /api/v1/periods/{id}/change_status/`
-- `GET/POST /api/v1/journal-entries/`
-- `PUT/PATCH /api/v1/journal-entries/{id}/` for draft-only edits
-- `POST /api/v1/journal-entries/{id}/post/` with optional `allow_soft_closed=true`
-- `POST /api/v1/journal-entries/{id}/reverse/` with optional `allow_soft_closed=true`
-- `GET /api/v1/audit-logs/`
+- `GET/POST/PATCH /api/v1/accounts/`; generic `PUT` and `DELETE` are disabled.
+- `GET/POST/PATCH /api/v1/periods/`; `status` cannot be patched directly.
+- `POST /api/v1/periods/{id}/change_status/` for period status transitions.
+- `GET/POST /api/v1/journal-entries/`; create always produces a draft.
+- `PATCH /api/v1/journal-entries/{id}/` for draft-only edits; generic `PUT` and `DELETE` are disabled.
+- `POST /api/v1/journal-entries/{id}/post/` for posting.
+- `POST /api/v1/journal-entries/{id}/reverse/` for reversal.
+- `GET /api/v1/audit-logs/`; audit logs are read-only.
 
 DRF uses Django session/basic authentication and requires authenticated users by default. Full MVP role enforcement belongs to Epic 6.
+
+## Ledger invariants
+
+Read `docs/accounting-core-invariants.md` before changing ledger behavior. It defines the service-layer, posting, reversal, period, balance, and audit rules that future epics must preserve.
 
 ## Manual acceptance checks
 
@@ -208,7 +226,7 @@ DRF uses Django session/basic authentication and requires authenticated users by
 4. Confirm the draft does not change balances.
 5. Post it and verify account balances changed.
 6. Attempt an unbalanced journal entry and verify posting is rejected.
-7. Soft-close the period and verify posting is rejected unless `allow_soft_closed=true` is passed to the post action or service call.
+7. Close the period and verify posting is rejected.
 8. Lock the period and verify new postings inside it are rejected.
 9. Reverse the posted entry and verify the original remains visible and balances net back to zero.
 10. Confirm audit logs exist for COA import, period change, journal creation, posting, and reversal.
