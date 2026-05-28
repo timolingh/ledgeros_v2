@@ -28,6 +28,7 @@ This epic delivers the fundamental accounting controls required by the MVP. With
 - Single-entity assumption enforced in data model and UI
 - Chart-of-accounts import from YAML
 - Initial audit log capture for ledger changes
+- User-facing documentation that explains how to manually test core accounting functionality
 
 ## Implementation Notes
 - Implementation must use Python/Django models and Django ORM for the core ledger schema.
@@ -93,5 +94,5 @@ This epic delivers the fundamental accounting controls required by the MVP. With
 - No external business-layer integration required for MVP
 
 ## Approval
-- Status: **Pending**
+- Status: Approved
 - Approval required before any code is built against this epic.
