@@ -11,7 +11,7 @@ from django.test import Client, RequestFactory
 
 from apps.accounting.admin import AccountAdmin, AccountingPeriodAdmin, JournalEntryAdmin, JournalLineInlineFormSet
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, JournalLine
-from apps.accounting.services import JournalLineInput, create_accounting_period, create_and_post_journal_entry, create_draft_journal_entry, post_journal_entry, update_draft_journal_entry
+from apps.accounting.services import JournalLineInput, create_accounting_period, create_and_post_journal_entry, create_draft_journal_entry, post_journal_entry, reverse_journal_entry, update_draft_journal_entry
 from apps.accounting.services.chart_import import import_chart_of_accounts
 from apps.accounting.services.entities import get_default_entity
 from apps.accounting.transition_rules import validate_accounting_period_status_transition, validate_journal_entry_status_transition
@@ -469,6 +469,79 @@ def test_journal_entry_admin_save_related_uses_shared_update_service(coa):
 
     assert entry.lines.count() == 2
     assert AuditLog.objects.filter(action="journal_entry_created", record_id=str(entry.pk)).exists()
+
+
+@pytest.mark.django_db
+def test_journal_entry_admin_save_related_skips_posted_entries(coa):
+    period = create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    entry = create_and_post_journal_entry(
+        entry_date=date(2026, 5, 1),
+        description="Posted admin entry",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser(username="admin-posted-save", password="password", email="admin-posted-save@example.com")
+    admin_instance = JournalEntryAdmin(JournalEntry, django_admin.site)
+    form = SimpleNamespace(instance=entry, cleaned_data={"date": entry.date, "description": entry.description, "status": entry.status})
+    formset_class = inlineformset_factory(JournalEntry, JournalLine, fields=("account", "side", "amount", "description"), extra=0, formset=JournalLineInlineFormSet)
+    formset = formset_class(
+        data={
+            "lines-TOTAL_FORMS": "2",
+            "lines-INITIAL_FORMS": "2",
+            "lines-MIN_NUM_FORMS": "0",
+            "lines-MAX_NUM_FORMS": "1000",
+            "lines-0-account": str(Account.objects.get(account_code="1000").pk),
+            "lines-0-side": JournalLine.Side.DEBIT,
+            "lines-0-amount": "100.00",
+            "lines-0-description": "",
+            "lines-0-id": str(entry.lines.first().pk),
+            "lines-0-journal_entry": str(entry.pk),
+            "lines-1-account": str(Account.objects.get(account_code="4000").pk),
+            "lines-1-side": JournalLine.Side.CREDIT,
+            "lines-1-amount": "100.00",
+            "lines-1-description": "",
+            "lines-1-id": str(entry.lines.last().pk),
+            "lines-1-journal_entry": str(entry.pk),
+        },
+        instance=entry,
+        prefix="lines",
+    )
+
+    assert formset.is_valid()
+
+    admin_instance.save_related(request, form, [formset], change=True)
+
+    entry.refresh_from_db()
+    assert entry.status == JournalEntry.Status.POSTED
+    assert entry.lines.count() == 2
+
+
+@pytest.mark.django_db
+def test_journal_entry_admin_reverse_action_skips_non_reversible_entries(coa):
+    create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+    entry = create_and_post_journal_entry(
+        entry_date=date(2026, 5, 1),
+        description="Original entry",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+    reversal = reverse_journal_entry(entry=entry, reversal_date=date(2026, 5, 2))
+
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser(username="admin-reverse-mixed", password="password", email="admin-reverse-mixed@example.com")
+    admin_instance = JournalEntryAdmin(JournalEntry, django_admin.site)
+
+    admin_instance.reverse_selected_entries(request, JournalEntry.objects.filter(pk__in=[entry.pk, reversal.pk]))
+
+    entry.refresh_from_db()
+    reversal.refresh_from_db()
+    assert entry.status == JournalEntry.Status.REVERSED
+    assert reversal.status == JournalEntry.Status.POSTED
 
 
 @pytest.mark.django_db

@@ -199,7 +199,7 @@ class JournalEntryAdmin(admin.ModelAdmin):
                     )
                 )
 
-        if lines:
+        if lines and current_status == JournalEntry.Status.DRAFT:
             update_draft_journal_entry(
                 entry=form.instance,
                 entry_date=form.cleaned_data["date"],
@@ -217,7 +217,9 @@ class JournalEntryAdmin(admin.ModelAdmin):
     @admin.action(description="Post selected journal entries")
     @transaction.atomic
     def post_selected_entries(self, request, queryset):
-        entries = list(queryset)
+        entries = list(queryset.filter(status=JournalEntry.Status.DRAFT))
+        if not entries:
+            return
         for entry in entries:
             period = resolve_period_for_posting(entry.entity, entry.date)
             self._assert_soft_closed_posting_permission(request, period)
@@ -228,7 +230,9 @@ class JournalEntryAdmin(admin.ModelAdmin):
     @admin.action(description="Reverse selected journal entries")
     @transaction.atomic
     def reverse_selected_entries(self, request, queryset):
-        entries = list(queryset)
+        entries = list(queryset.filter(status=JournalEntry.Status.POSTED, reversal_of__isnull=True))
+        if not entries:
+            return
         reversal_date = timezone.now().date()
         for entry in entries:
             period = resolve_period_for_posting(entry.entity, reversal_date)
