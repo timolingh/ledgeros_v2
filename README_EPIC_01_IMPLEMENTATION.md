@@ -189,14 +189,14 @@ PY
 These are thin Epic 1 core endpoints, not the Epic 5 external event ingestion API.
 
 - `GET /api/v1/entities/`
-- `GET/POST /api/v1/accounts/`
-- `GET/POST /api/v1/periods/`
-- `POST /api/v1/periods/{id}/change_status/`
-- `GET/POST /api/v1/journal-entries/`
-- `PUT/PATCH /api/v1/journal-entries/{id}/` for draft-only edits
-- `POST /api/v1/journal-entries/{id}/post/`
-- `POST /api/v1/journal-entries/{id}/reverse/`
-- `GET /api/v1/audit-logs/`
+- `GET/POST/PATCH /api/v1/accounts/`; generic `PUT` and `DELETE` are disabled.
+- `GET/POST/PATCH /api/v1/periods/`; `status` cannot be patched directly.
+- `POST /api/v1/periods/{id}/change_status/` for period status transitions.
+- `GET/POST /api/v1/journal-entries/`; create always produces a draft.
+- `PATCH /api/v1/journal-entries/{id}/` for draft-only edits; generic `PUT` and `DELETE` are disabled.
+- `POST /api/v1/journal-entries/{id}/post/` for posting.
+- `POST /api/v1/journal-entries/{id}/reverse/` for reversal.
+- `GET /api/v1/audit-logs/`; audit logs are read-only.
 
 DRF uses Django session/basic authentication and requires authenticated users by default. Full MVP role enforcement belongs to Epic 6.
 

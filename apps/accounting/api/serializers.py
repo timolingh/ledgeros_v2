@@ -32,8 +32,16 @@ class AccountSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         return save_account(entity=get_default_entity(), **validated_data)
 
-    def update(self, instance, validated_data):
-        return save_account(account=instance, entity=instance.entity, **validated_data)
+    def update(self, instance: Account, validated_data):
+        return save_account(
+            account=instance,
+            entity=instance.entity,
+            account_code=validated_data.get("account_code", instance.account_code),
+            name=validated_data.get("name", instance.name),
+            type=validated_data.get("type", instance.type),
+            normal_balance=validated_data.get("normal_balance", instance.normal_balance),
+            is_active=validated_data.get("is_active", instance.is_active),
+        )
 
 
 class AccountingPeriodSerializer(serializers.ModelSerializer):
@@ -42,8 +50,14 @@ class AccountingPeriodSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "start_date", "end_date", "status", "closed_at", "locked_at", "created_at", "updated_at"]
         read_only_fields = ["id", "status", "closed_at", "locked_at", "created_at", "updated_at"]
 
-    def update(self, instance, validated_data):
-        return save_accounting_period(period=instance, entity=instance.entity, **validated_data)
+    def update(self, instance: AccountingPeriod, validated_data):
+        return save_accounting_period(
+            period=instance,
+            entity=instance.entity,
+            start_date=validated_data.get("start_date", instance.start_date),
+            end_date=validated_data.get("end_date", instance.end_date),
+            name=validated_data.get("name", instance.name),
+        )
 
 
 class JournalLineSerializer(serializers.ModelSerializer):
@@ -105,12 +119,20 @@ class JournalEntrySerializer(serializers.ModelSerializer):
 
 
 class JournalEntryWriteSerializer(serializers.Serializer):
-    date = serializers.DateField()
-    description = serializers.CharField()
+    date = serializers.DateField(required=False)
+    description = serializers.CharField(required=False)
     source = serializers.CharField(required=False, default="manual")
-    lines = JournalLineInputSerializer(many=True)
+    lines = JournalLineInputSerializer(many=True, required=False)
 
     def validate(self, attrs):
+        if self.instance is None:
+            missing = [field for field in ("date", "description", "lines") if field not in attrs]
+            if missing:
+                raise serializers.ValidationError({field: "This field is required." for field in missing})
+
+        if "lines" not in attrs:
+            return attrs
+
         lines = attrs.get("lines", [])
         if len(lines) < 2:
             raise serializers.ValidationError({"lines": "A journal entry requires at least two lines."})
@@ -126,7 +148,7 @@ class JournalEntryWriteSerializer(serializers.Serializer):
         return attrs
 
     def _line_inputs(self) -> list[JournalLineInput]:
-        return [JournalLineInput(**line) for line in self.validated_data["lines"]]
+        return [JournalLineInput(**line) for line in self.validated_data.get("lines", [])]
 
     def create(self, validated_data):
         request = self.context.get("request")
