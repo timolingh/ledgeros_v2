@@ -63,14 +63,29 @@ Starting from a running Docker environment with Epic 1 core:
 # Migrations are applied automatically when container starts
 docker compose run --rm web python manage.py migrate
 
+# Import the sample chart of accounts (required for AR/AP accounts to exist)
+docker compose run --rm web python manage.py import_coa config/sample_chart_of_accounts.yml
+
+# Create an accounting period (required for posting invoices/bills/payments)
+docker compose run --rm -T web python manage.py shell <<'PY'
+from datetime import date
+from apps.accounting.services import create_accounting_period
+
+period = create_accounting_period(
+    start_date=date(2026, 1, 1),
+    end_date=date(2026, 12, 31),
+    name="FY2026",
+)
+
+print(f"Created period: {period.name}")
+PY
+
 # Create a customer
 docker compose run --rm -T web python manage.py shell <<'PY'
 from apps.accounting.models import Customer, Account, Entity
-from apps.accounting.services import create_and_post_journal_entry, JournalLineInput
-from datetime import date
 
 entity = Entity.get_default()
-ar_account = Account.objects.get(entity=entity, account_code="1200")
+ar_account = Account.objects.get(entity=entity, account_code="1100")
 
 customer = Customer.objects.create(
     entity=entity,
@@ -133,7 +148,7 @@ from apps.accounting.services import apply_payment_to_invoice
 entity = Entity.get_default()
 customer = Customer.objects.get(customer_code="WID-001")
 invoice = Invoice.objects.get(invoice_number="INV-001")
-cash_account = Account.objects.get(entity=entity, account_code="1000")
+cash_account = Account.objects.get(entity=entity, account_code="1000")  # Cash account
 
 payment = Payment.objects.create(
     entity=entity,
@@ -190,7 +205,7 @@ from apps.accounting.models import Account, Entity
 from apps.accounting.selectors.balances import account_balance
 
 entity = Entity.get_default()
-ar = Account.objects.get(entity=entity, account_code="1200")
+ar = Account.objects.get(entity=entity, account_code="1100")  # Accounts Receivable
 
 balance = account_balance(ar)
 print(f"AR Account Balance: {balance}")
@@ -226,7 +241,7 @@ from apps.accounting.services import post_invoice
 
 entity = Entity.get_default()
 customer = Customer.objects.get(customer_code="ACME-001")
-revenue_account = Account.objects.get(entity=entity, account_code="4000")
+revenue_account = Account.objects.get(entity=entity, account_code="4000")  # Revenue
 
 invoice = Invoice.objects.create(
     entity=entity,
@@ -259,7 +274,7 @@ from apps.accounting.services import post_bill
 
 entity = Entity.get_default()
 vendor = Vendor.objects.get(vendor_code="SUPP-001")
-expense_account = Account.objects.get(entity=entity, account_code="5000")
+expense_account = Account.objects.get(entity=entity, account_code="5000")  # Operating Expense
 
 bill = Bill.objects.create(
     entity=entity,
@@ -290,7 +305,7 @@ from apps.accounting.models import Invoice, Payment
 from apps.accounting.services import apply_payment_to_invoice
 
 invoice = Invoice.objects.get(invoice_number="INV-500")
-cash = Account.objects.get(account_code="1000")
+cash = Account.objects.get(account_code="1000")  # Cash
 
 payment = Payment.objects.create(
     entity=invoice.entity,
