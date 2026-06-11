@@ -8,6 +8,7 @@ Before implementing or reviewing an epic, read:
 
 - `CLAUDE.md`
 - `docs/accounting-core-invariants.md`
+- `docs/reporting-invariants.md`
 - the relevant epic specification
 - the PRD sections that touch the epic
 
@@ -296,7 +297,33 @@ Business rules belong in:
 
 Admin and API must not implement their own separate accounting logic.
 
-## 10. Manual Acceptance Checks
+## 10. Reporting Traceability Rule
+
+For reporting epics, every report must define:
+
+- source records,
+- included statuses,
+- excluded statuses,
+- date semantics,
+- basis semantics,
+- sign semantics,
+- drill-down behavior,
+- tests for contra activity.
+
+A report endpoint returning JSON is not sufficient. The JSON must match accounting meaning.
+
+Required reporting test matrix:
+
+| Scenario | Balance sheet | Accrual P&L | Cash P&L | Drill-down |
+|---|---:|---:|---:|---:|
+| Normal revenue | current earnings affected | included | depends on payment | reconciles |
+| Contra revenue | current earnings reduced | negative revenue | depends on payment | reconciles |
+| Normal expense | current earnings affected | included | depends on payment | reconciles |
+| Contra expense | current earnings increased | negative expense | depends on payment | reconciles |
+| Prior-period activity | included only if as-of | excluded | excluded | excluded |
+| Draft activity | excluded | excluded | excluded | excluded |
+
+## 11. Manual Acceptance Checks
 
 Every epic README must include Docker-ready manual acceptance checks.
 
@@ -332,7 +359,7 @@ Examples of observable state:
 - audit log was written,
 - invalid operation was rejected.
 
-## 11. Automated Test Expectations
+## 12. Automated Test Expectations
 
 Every implemented requirement should have automated test coverage unless there is a documented reason manual verification is sufficient.
 
@@ -358,7 +385,7 @@ test_bank_reconciliation_rejects_amount_mismatch
 
 Avoid tests that only prove objects can be created without validating accounting meaning.
 
-## 12. Validation Before Handoff
+## 13. Validation Before Handoff
 
 Before claiming an epic is complete, run the project validation sequence.
 
@@ -386,7 +413,7 @@ docker compose run --rm web python manage.py import_coa config/sample_chart_of_a
 
 If any command cannot be run in the current environment, say so explicitly and provide the exact command the user should run.
 
-## 13. No Unreviewed Scope Expansion
+## 14. No Unreviewed Scope Expansion
 
 Do not implement later-epic functionality just because it is easy to scaffold.
 
@@ -405,7 +432,7 @@ Before adding any of the following, confirm it is part of the current epic:
 
 If future hooks are necessary, keep them minimal, inert, documented, and tested.
 
-## 14. Done Means Traceable
+## 15. Done Means Traceable
 
 An epic is not done until the following are true:
 
