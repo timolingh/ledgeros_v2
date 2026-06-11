@@ -6,9 +6,10 @@ from django.db import transaction
 from django.forms.models import BaseInlineFormSet
 from django.utils import timezone
 
-from apps.accounting.models import Account, AccountingPeriod, AuditLog, JournalEntry, JournalLine
+from apps.accounting.models import Account, AccountingPeriod, AuditLog, BankAccount, BankReconciliation, BankReconciliationMatch, BankStatementLine, BankTransaction, JournalEntry, JournalLine
 from apps.accounting.selectors import account_balance
 from apps.accounting.services import change_period_status, post_journal_entry, reverse_journal_entry
+from apps.accounting.services.banking import save_bank_account
 from apps.accounting.services.entities import get_default_entity
 from apps.accounting.services.posting import JournalLineInput, assert_line_inputs_balanced, update_draft_journal_entry
 from apps.accounting.services.writes import save_account, save_accounting_period
@@ -36,6 +37,96 @@ class AccountAdmin(admin.ModelAdmin):
             normal_balance=obj.normal_balance,
             is_active=obj.is_active,
         )
+
+
+@admin.register(BankAccount)
+class BankAccountAdmin(admin.ModelAdmin):
+    exclude = ["entity"]
+    list_display = ["name", "bank_name", "account_number", "ledger_account", "status", "current_balance"]
+    list_filter = ["status", "bank_name"]
+    search_fields = ["name", "account_number", "bank_name"]
+
+    @admin.display(description="Current balance")
+    def current_balance(self, obj: BankAccount):
+        return obj.current_balance()
+
+    def save_model(self, request, obj, form, change):
+        save_bank_account(
+            bank_account=obj if change else None,
+            entity=obj.entity if obj.entity_id else get_default_entity(),
+            name=obj.name,
+            account_number=obj.account_number,
+            bank_name=obj.bank_name,
+            ledger_account=obj.ledger_account,
+            status=obj.status,
+            user=request.user,
+            source="admin",
+        )
+
+
+@admin.register(BankTransaction)
+class BankTransactionAdmin(admin.ModelAdmin):
+    list_display = ["bank_account", "transaction_date", "transaction_type", "amount", "source_type", "source_id"]
+    list_filter = ["transaction_type", "transaction_date", "bank_account"]
+    search_fields = ["memo", "source_type"]
+    readonly_fields = ["entity", "bank_account", "journal_entry", "transaction_date", "amount", "transaction_type", "source_type", "source_id", "memo", "created_at"]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BankStatementLine)
+class BankStatementLineAdmin(admin.ModelAdmin):
+    list_display = ["bank_account", "statement_date", "amount", "statement_reference"]
+    list_filter = ["statement_date", "bank_account"]
+    search_fields = ["description", "statement_reference"]
+    readonly_fields = ["entity", "bank_account", "statement_date", "amount", "description", "statement_reference", "created_at"]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BankReconciliation)
+class BankReconciliationAdmin(admin.ModelAdmin):
+    list_display = ["bank_account", "start_date", "end_date", "status", "statement_ending_balance", "cleared_balance"]
+    list_filter = ["status", "bank_account"]
+    readonly_fields = ["entity", "bank_account", "start_date", "end_date", "status", "statement_ending_balance", "cleared_balance", "created_at", "updated_at"]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BankReconciliationMatch)
+class BankReconciliationMatchAdmin(admin.ModelAdmin):
+    list_display = ["reconciliation", "statement_line", "bank_transaction", "matched_amount"]
+    readonly_fields = ["reconciliation", "statement_line", "bank_transaction", "matched_amount", "created_at"]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 class JournalLineInlineFormSet(BaseInlineFormSet):

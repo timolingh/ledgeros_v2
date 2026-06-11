@@ -19,8 +19,9 @@ from apps.accounting.models import (
     PaymentApplication,
 )
 from apps.accounting.services.audit import audit_success
-from apps.accounting.services.posting import create_and_post_journal_entry, JournalLineInput
 from apps.accounting.services.entities import get_default_entity
+from apps.accounting.services.posting import JournalLineInput, create_and_post_journal_entry
+from apps.accounting.services.writes import get_or_create_undeposited_funds_account
 
 if TYPE_CHECKING:
     from django.contrib.auth import get_user_model
@@ -175,7 +176,7 @@ def apply_payment_to_invoice(
     """
     Apply a payment to an invoice.
 
-    Creates a journal entry: Debit Cash/Bank, Credit AR
+    Creates a journal entry: Debit Undeposited Funds, Credit AR
     Updates invoice status based on remaining balance.
     Returns the PaymentApplication and the journal entry.
     """
@@ -188,21 +189,26 @@ def apply_payment_to_invoice(
     if applied_amount > payment.amount:
         raise ValidationError(f"Applied amount cannot exceed payment amount of {payment.amount}.")
 
+    clearing_account = get_or_create_undeposited_funds_account(entity=payment.entity)
+    if payment.account_id != clearing_account.id:
+        payment.account = clearing_account
+        payment.save(update_fields=["account"])
+
     # Get AR account from customer
     ar_account = invoice.customer.default_ar_account
     if not ar_account:
         raise ValidationError(f"Customer {invoice.customer.customer_code} has no default AR account configured.")
 
-    # Create journal entry: Debit Cash, Credit AR
+    # Create journal entry: Debit Undeposited Funds, Credit AR
     entry = create_and_post_journal_entry(
         entry_date=payment.payment_date,
         description=f"Payment for invoice {invoice.invoice_number}",
         lines=[
             JournalLineInput(
-                account_code=payment.account.account_code,
+                account_code=clearing_account.account_code,
                 side="debit",
                 amount=applied_amount,
-                description=f"Cash receipt for invoice {invoice.invoice_number}",
+                description=f"Undeposited receipt for invoice {invoice.invoice_number}",
             ),
             JournalLineInput(
                 account_code=ar_account.account_code,
@@ -253,7 +259,7 @@ def apply_payment_to_bill(
     """
     Apply a payment to a bill.
 
-    Creates a journal entry: Debit AP, Credit Cash/Bank
+    Creates a journal entry: Debit AP, Credit Undeposited Funds
     Updates bill status based on remaining balance.
     Returns the PaymentApplication and the journal entry.
     """
@@ -266,12 +272,17 @@ def apply_payment_to_bill(
     if applied_amount > payment.amount:
         raise ValidationError(f"Applied amount cannot exceed payment amount of {payment.amount}.")
 
+    clearing_account = get_or_create_undeposited_funds_account(entity=payment.entity)
+    if payment.account_id != clearing_account.id:
+        payment.account = clearing_account
+        payment.save(update_fields=["account"])
+
     # Get AP account from vendor
     ap_account = bill.vendor.default_ap_account
     if not ap_account:
         raise ValidationError(f"Vendor {bill.vendor.vendor_code} has no default AP account configured.")
 
-    # Create journal entry: Debit AP, Credit Cash
+    # Create journal entry: Debit AP, Credit Undeposited Funds
     entry = create_and_post_journal_entry(
         entry_date=payment.payment_date,
         description=f"Payment for bill {bill.bill_number}",
@@ -283,10 +294,10 @@ def apply_payment_to_bill(
                 description=f"AP reduction for bill {bill.bill_number}",
             ),
             JournalLineInput(
-                account_code=payment.account.account_code,
+                account_code=clearing_account.account_code,
                 side="credit",
                 amount=applied_amount,
-                description=f"Cash payment for bill {bill.bill_number}",
+                description=f"Undeposited payment for bill {bill.bill_number}",
             ),
         ],
         created_by=user,

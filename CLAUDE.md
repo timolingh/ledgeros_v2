@@ -28,6 +28,15 @@ Goal-driven execution:
   - expected report totals
 - Write or update tests before implementation when behavior changes.
 
+## Epic Implementation Discipline
+
+Before implementing or reviewing any epic, read and follow:
+
+- `docs/accounting-core-invariants.md`
+- `docs/epic-implementation-guardrails.md`
+
+Every epic must include a requirement traceability matrix, explicit deferred/out-of-scope items, automated tests for implemented accounting invariants, and Docker-ready manual acceptance checks.
+
 ## Anti-Slop Engineering Principles
 
 1. **Run the code, not just the generator.**  

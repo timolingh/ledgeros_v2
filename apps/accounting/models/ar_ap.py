@@ -281,7 +281,7 @@ class Payment(models.Model):
     account = models.ForeignKey(
         Account,
         on_delete=models.PROTECT,
-        help_text="Cash/bank account to debit (for invoice) or credit (for bill).",
+        help_text="Account associated with the payment record while funds are undeposited.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -290,6 +290,13 @@ class Payment(models.Model):
 
     def __str__(self) -> str:
         return f"Payment {self.id} ({self.source_type}) {self.amount} on {self.payment_date}"
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and self.entity_id:
+            from apps.accounting.services.writes import get_or_create_undeposited_funds_account
+
+            self.account = get_or_create_undeposited_funds_account(entity=self.entity)
+        super().save(*args, **kwargs)
 
     def clean(self) -> None:
         if self.account.entity_id != self.entity_id:

@@ -3,6 +3,10 @@ accounts:
     name: Cash
     type: asset
     normal_balance: debit
+  - code: "1010"
+    name: Undeposited Funds
+    type: asset
+    normal_balance: debit
   - code: "1100"
     name: Accounts Receivable
     type: asset

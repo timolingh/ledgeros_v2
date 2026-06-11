@@ -8,6 +8,9 @@ from django.db import transaction
 from apps.accounting.models import Account, AccountingPeriod, Entity
 from apps.accounting.services.entities import get_default_entity
 
+UNDEPOSITED_FUNDS_ACCOUNT_CODE = "1010"
+UNDEPOSITED_FUNDS_ACCOUNT_NAME = "Undeposited Funds"
+
 
 @transaction.atomic
 def save_account(*, account: Account | None = None, entity: Entity | None = None, account_code: str, name: str, type: str, normal_balance: str, is_active: bool = True) -> Account:
@@ -25,6 +28,34 @@ def save_account(*, account: Account | None = None, entity: Entity | None = None
     account.full_clean()
     account.save()
     return account
+
+
+@transaction.atomic
+def get_or_create_undeposited_funds_account(*, entity: Entity | None = None) -> Account:
+    """Return the reserved clearing account used while funds are not yet deposited."""
+    entity = entity or get_default_entity()
+    account = Account.objects.filter(entity=entity, account_code=UNDEPOSITED_FUNDS_ACCOUNT_CODE).first()
+    if account is not None:
+        expected_type = Account.AccountType.ASSET
+        expected_balance = Account.NormalBalance.DEBIT
+        if account.name != UNDEPOSITED_FUNDS_ACCOUNT_NAME or account.type != expected_type or account.normal_balance != expected_balance:
+            raise ValidationError(
+                {
+                    "account_code": (
+                        f"Account {UNDEPOSITED_FUNDS_ACCOUNT_CODE} is reserved for {UNDEPOSITED_FUNDS_ACCOUNT_NAME} "
+                        "and has conflicting settings."
+                    )
+                }
+            )
+        return account
+
+    return save_account(
+        entity=entity,
+        account_code=UNDEPOSITED_FUNDS_ACCOUNT_CODE,
+        name=UNDEPOSITED_FUNDS_ACCOUNT_NAME,
+        type=Account.AccountType.ASSET,
+        normal_balance=Account.NormalBalance.DEBIT,
+    )
 
 
 def _assert_period_dates_are_valid(*, period: AccountingPeriod | None, entity: Entity, start_date: date, end_date: date) -> None:

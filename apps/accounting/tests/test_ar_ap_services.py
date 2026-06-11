@@ -22,6 +22,7 @@ from apps.accounting.services import (
     apply_payment_to_bill,
     apply_payment_to_invoice,
     create_accounting_period,
+    get_or_create_undeposited_funds_account,
     issue_customer_credit,
     issue_vendor_credit,
     post_bill,
@@ -104,6 +105,11 @@ def cash_account(entity):
         type=Account.AccountType.ASSET,
         normal_balance=Account.NormalBalance.DEBIT,
     )
+
+
+@pytest.fixture
+def undeposited_funds_account(entity):
+    return get_or_create_undeposited_funds_account(entity=entity)
 
 
 @pytest.fixture
@@ -354,7 +360,7 @@ class TestBillPosting:
 class TestPaymentApplication:
     """Tests for payment application services."""
 
-    def test_apply_payment_to_invoice(self, customer, revenue_account, cash_account, period):
+    def test_apply_payment_to_invoice(self, customer, revenue_account, cash_account, undeposited_funds_account, period):
         """Applying payment to invoice creates GL entry and updates balance."""
         invoice = Invoice.objects.create(
             entity=customer.entity,
@@ -388,18 +394,21 @@ class TestPaymentApplication:
 
         # Check payment application created
         assert app.applied_amount == Decimal("400.00")
+        payment.refresh_from_db()
+        assert payment.account == undeposited_funds_account
 
         # Check journal entry created and balanced
         assert entry.status == JournalEntry.Status.POSTED
         assert entry.total_debits == Decimal("400.00")
         assert entry.total_credits == Decimal("400.00")
+        assert entry.lines.filter(account=undeposited_funds_account, side="debit").count() == 1
 
         # Check invoice updated to partially paid
         invoice.refresh_from_db()
         assert invoice.status == Invoice.Status.PARTIALLY_PAID
         assert invoice.outstanding_balance() == Decimal("600.00")
 
-    def test_apply_payment_to_invoice_full_payment(self, customer, revenue_account, cash_account, period):
+    def test_apply_payment_to_invoice_full_payment(self, customer, revenue_account, cash_account, undeposited_funds_account, period):
         """Applying full payment to invoice sets status to PAID."""
         invoice = Invoice.objects.create(
             entity=customer.entity,
@@ -431,11 +440,13 @@ class TestPaymentApplication:
             applied_amount=Decimal("500.00"),
         )
 
+        payment.refresh_from_db()
+        assert payment.account == undeposited_funds_account
         invoice.refresh_from_db()
         assert invoice.status == Invoice.Status.PAID
         assert invoice.outstanding_balance() == Decimal("0.00")
 
-    def test_apply_payment_to_bill(self, vendor, expense_account, cash_account, period):
+    def test_apply_payment_to_bill(self, vendor, expense_account, cash_account, undeposited_funds_account, period):
         """Applying payment to bill creates GL entry and updates balance."""
         from apps.accounting.models import Bill
 
@@ -471,11 +482,14 @@ class TestPaymentApplication:
 
         # Check payment application created
         assert app.applied_amount == Decimal("200.00")
+        payment.refresh_from_db()
+        assert payment.account == undeposited_funds_account
 
         # Check journal entry created and balanced
         assert entry.status == JournalEntry.Status.POSTED
         assert entry.total_debits == Decimal("200.00")
         assert entry.total_credits == Decimal("200.00")
+        assert entry.lines.filter(account=undeposited_funds_account, side="credit").count() == 1
 
         # Check bill updated to partially paid
         bill.refresh_from_db()
@@ -616,7 +630,7 @@ class TestCreditMemos:
 class TestARAPBalances:
     """Integration tests for AR/AP balance reconciliation."""
 
-    def test_ar_balance_with_invoice_and_payment(self, customer, revenue_account, cash_account, period):
+    def test_ar_balance_with_invoice_and_payment(self, customer, revenue_account, cash_account, undeposited_funds_account, period):
         """AR balance correctly reflects invoice posting and payment application."""
         ar_account = customer.default_ar_account
 
@@ -659,6 +673,7 @@ class TestARAPBalances:
 
         # AR should be 400
         assert account_balance(ar_account) == Decimal("400.00")
+        assert account_balance(undeposited_funds_account) == Decimal("600.00")
 
         # Issue 100 credit
         issue_customer_credit(invoice=invoice, amount=Decimal("100.00"))

@@ -42,8 +42,9 @@ MVP success requires the system to process receivables and payables as accountin
   - `refunds`: id, entity_id, original_payment_id, amount, refund_date
 - Invoice issuance should generate a journal entry that debits AR and credits revenue or appropriate income account.
 - Bill issuance should generate a journal entry that debits expense or asset account and credits AP.
-- Customer payment application should generate a journal entry that debits cash/bank and credits AR.
-- Vendor payment should generate a journal entry that debits AP and credits cash/bank.
+- Customer payment application should generate a journal entry that debits undeposited funds and credits AR.
+- Vendor payment should generate a journal entry that debits AP and credits undeposited funds.
+- A later banking deposit moves the cleared funds from undeposited funds into the appropriate bank account.
 - Credits should reduce AR/AP balances and may generate offsetting journal entries.
 - Refunds should reverse payment cash flow and adjust AR/AP or cash accounts accordingly.
 - Numbering:
@@ -56,14 +57,14 @@ MVP success requires the system to process receivables and payables as accountin
   - Debit: Accounts Receivable $500
   - Credit: Sales Revenue $500
 - Apply a customer payment of $500 to the invoice:
-  - Debit: Cash $500
+  - Debit: Undeposited Funds $500
   - Credit: Accounts Receivable $500
 - Create a vendor bill for $300 and mark it payable:
   - Debit: Expense $300
   - Credit: Accounts Payable $300
 - Pay the vendor bill from bank account:
   - Debit: Accounts Payable $300
-  - Credit: Bank Cash $300
+  - Credit: Undeposited Funds $300
 
 ## Acceptance Criteria
 - UI or API can create invoices and bills with correct AR/AP posting
