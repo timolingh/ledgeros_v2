@@ -4,10 +4,11 @@ from datetime import date
 
 from rest_framework import serializers
 
-from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, JournalLine
+from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, JournalLine, ReportView, TaxCode
 from apps.accounting.selectors import account_balance
 from apps.accounting.services import JournalLineInput, post_journal_entry, reverse_journal_entry, update_draft_journal_entry
 from apps.accounting.services.entities import get_default_entity
+from apps.accounting.services.reporting import save_report_view, save_tax_code
 from apps.accounting.services.posting import create_draft_journal_entry
 from apps.accounting.services.writes import save_account, save_accounting_period
 
@@ -58,6 +59,89 @@ class AccountingPeriodSerializer(serializers.ModelSerializer):
             start_date=validated_data.get("start_date", instance.start_date),
             end_date=validated_data.get("end_date", instance.end_date),
             name=validated_data.get("name", instance.name),
+        )
+
+
+class ReportViewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ReportView
+        fields = [
+            "id",
+            "name",
+            "report_type",
+            "basis",
+            "as_of_date",
+            "start_date",
+            "end_date",
+            "filters",
+            "display_settings",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def create(self, validated_data):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return save_report_view(entity=get_default_entity(), user=user if getattr(user, "is_authenticated", False) else None, **validated_data)
+
+    def update(self, instance: ReportView, validated_data):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return save_report_view(
+            report_view=instance,
+            entity=instance.entity,
+            user=user if getattr(user, "is_authenticated", False) else None,
+            name=validated_data.get("name", instance.name),
+            report_type=validated_data.get("report_type", instance.report_type),
+            basis=validated_data.get("basis", instance.basis),
+            as_of_date=validated_data.get("as_of_date", instance.as_of_date),
+            start_date=validated_data.get("start_date", instance.start_date),
+            end_date=validated_data.get("end_date", instance.end_date),
+            filters=validated_data.get("filters", instance.filters),
+            display_settings=validated_data.get("display_settings", instance.display_settings),
+        )
+
+
+class TaxCodeSerializer(serializers.ModelSerializer):
+    liability_account_code = serializers.CharField(source="liability_account.account_code", read_only=True)
+    liability_account_name = serializers.CharField(source="liability_account.name", read_only=True)
+
+    class Meta:
+        model = TaxCode
+        fields = [
+            "id",
+            "code",
+            "name",
+            "rate",
+            "jurisdiction",
+            "liability_account",
+            "liability_account_code",
+            "liability_account_name",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "liability_account_code", "liability_account_name", "created_at", "updated_at"]
+
+    def create(self, validated_data):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return save_tax_code(entity=get_default_entity(), user=user if getattr(user, "is_authenticated", False) else None, **validated_data)
+
+    def update(self, instance: TaxCode, validated_data):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return save_tax_code(
+            tax_code=instance,
+            entity=instance.entity,
+            user=user if getattr(user, "is_authenticated", False) else None,
+            code=validated_data.get("code", instance.code),
+            name=validated_data.get("name", instance.name),
+            rate=validated_data.get("rate", instance.rate),
+            jurisdiction=validated_data.get("jurisdiction", instance.jurisdiction),
+            liability_account=validated_data.get("liability_account", instance.liability_account),
+            is_active=validated_data.get("is_active", instance.is_active),
         )
 
 

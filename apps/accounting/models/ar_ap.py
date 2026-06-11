@@ -283,6 +283,7 @@ class Payment(models.Model):
         on_delete=models.PROTECT,
         help_text="Account associated with the payment record while funds are undeposited.",
     )
+    is_credit_adjustment = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

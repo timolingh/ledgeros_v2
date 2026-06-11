@@ -84,5 +84,5 @@ Users need auditable financial statements and period controls to close the books
 - Epic 3: Banking and Reconciliation
 
 ## Approval
-- Status: **Pending**
-- Approval required before any code is built against this epic.
+- Status: **Implemented**
+- See `README_EPIC_04_IMPLEMENTATION.md` for traceability, deferred items, and manual acceptance checks.

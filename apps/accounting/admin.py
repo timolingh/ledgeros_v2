@@ -6,9 +6,10 @@ from django.db import transaction
 from django.forms.models import BaseInlineFormSet
 from django.utils import timezone
 
-from apps.accounting.models import Account, AccountingPeriod, AuditLog, BankAccount, BankReconciliation, BankReconciliationMatch, BankStatementLine, BankTransaction, JournalEntry, JournalLine
+from apps.accounting.models import Account, AccountingPeriod, AuditLog, BankAccount, BankReconciliation, BankReconciliationMatch, BankStatementLine, BankTransaction, JournalEntry, JournalLine, ReportView, TaxCode
 from apps.accounting.selectors import account_balance
 from apps.accounting.services import change_period_status, post_journal_entry, reverse_journal_entry
+from apps.accounting.services.reporting import save_report_view, save_tax_code
 from apps.accounting.services.banking import save_bank_account
 from apps.accounting.services.entities import get_default_entity
 from apps.accounting.services.posting import JournalLineInput, assert_line_inputs_balanced, update_draft_journal_entry
@@ -127,6 +128,52 @@ class BankReconciliationMatchAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(ReportView)
+class ReportViewAdmin(admin.ModelAdmin):
+    exclude = ["entity", "created_by"]
+    list_display = ["name", "report_type", "basis", "as_of_date", "start_date", "end_date"]
+    list_filter = ["report_type", "basis"]
+    search_fields = ["name"]
+
+    def save_model(self, request, obj, form, change):
+        save_report_view(
+            report_view=obj if change else None,
+            entity=obj.entity if obj.entity_id else get_default_entity(),
+            name=obj.name,
+            report_type=obj.report_type,
+            basis=obj.basis,
+            as_of_date=obj.as_of_date,
+            start_date=obj.start_date,
+            end_date=obj.end_date,
+            filters=obj.filters,
+            display_settings=obj.display_settings,
+            user=request.user,
+            source="admin",
+        )
+
+
+@admin.register(TaxCode)
+class TaxCodeAdmin(admin.ModelAdmin):
+    exclude = ["entity"]
+    list_display = ["code", "name", "jurisdiction", "rate", "liability_account", "is_active"]
+    list_filter = ["jurisdiction", "is_active"]
+    search_fields = ["code", "name"]
+
+    def save_model(self, request, obj, form, change):
+        save_tax_code(
+            tax_code=obj if change else None,
+            entity=obj.entity if obj.entity_id else get_default_entity(),
+            code=obj.code,
+            name=obj.name,
+            rate=obj.rate,
+            jurisdiction=obj.jurisdiction,
+            liability_account=obj.liability_account,
+            is_active=obj.is_active,
+            user=request.user,
+            source="admin",
+        )
 
 
 class JournalLineInlineFormSet(BaseInlineFormSet):

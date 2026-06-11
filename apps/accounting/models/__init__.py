@@ -14,6 +14,7 @@ from .ar_ap import (
 from .audit import AuditLog
 from .journals import JournalEntry, JournalLine
 from .periods import AccountingPeriod
+from .reporting import ReportView, TaxCode
 
 __all__ = [
     "Account",
@@ -33,7 +34,9 @@ __all__ = [
     "InvoiceLine",
     "JournalEntry",
     "JournalLine",
+    "ReportView",
     "Payment",
     "PaymentApplication",
+    "TaxCode",
     "Vendor",
 ]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -15,8 +17,18 @@ from apps.accounting.api.serializers import (
     JournalEntryWriteSerializer,
     PostJournalEntrySerializer,
     ReverseJournalEntrySerializer,
+    ReportViewSerializer,
+    TaxCodeSerializer,
 )
-from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry
+from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, ReportView, TaxCode
+from apps.accounting.services.reporting import (
+    generate_balance_sheet,
+    generate_profit_and_loss,
+    generate_report_drilldown,
+    run_report_view,
+    summarize_period,
+    tax_summary,
+)
 from apps.accounting.services.entities import get_default_entity
 from apps.accounting.services.periods import change_period_status, create_accounting_period
 
@@ -27,6 +39,16 @@ def raise_drf_validation(exc: DjangoValidationError) -> None:
 
 def request_has_field(request, field_name: str) -> bool:
     return field_name in getattr(request, "data", {})
+
+
+def parse_query_date(request, field_name: str) -> date:
+    value = request.query_params.get(field_name)
+    if not value:
+        raise DRFValidationError({field_name: "This query parameter is required."})
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise DRFValidationError({field_name: "Enter a valid date in YYYY-MM-DD format."}) from exc
 
 
 class DefaultEntityScopedMixin:
@@ -112,6 +134,11 @@ class AccountingPeriodViewSet(UnsafeMethodLimitedMixin, DefaultEntityScopedMixin
             raise_drf_validation(exc)
         return Response(self.get_serializer(period).data)
 
+    @action(detail=True, methods=["get"])
+    def summary(self, request, pk=None):
+        period = self.get_object()
+        return Response(summarize_period(period=period))
+
 
 class JournalEntryViewSet(UnsafeMethodLimitedMixin, DefaultEntityScopedMixin, viewsets.ModelViewSet):
     def get_queryset(self):
@@ -174,3 +201,107 @@ class JournalEntryViewSet(UnsafeMethodLimitedMixin, DefaultEntityScopedMixin, vi
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = AuditLogSerializer
     queryset = AuditLog.objects.all().order_by("-timestamp", "-id")
+
+
+class ReportViewSet(UnsafeMethodLimitedMixin, DefaultEntityScopedMixin, viewsets.ModelViewSet):
+    serializer_class = ReportViewSerializer
+
+    def get_queryset(self):
+        return ReportView.objects.filter(entity=self.get_entity()).order_by("name", "id")
+
+    def perform_create(self, serializer):
+        try:
+            serializer.save()
+        except DjangoValidationError as exc:
+            raise_drf_validation(exc)
+
+    def perform_update(self, serializer):
+        try:
+            serializer.save()
+        except DjangoValidationError as exc:
+            raise_drf_validation(exc)
+
+    @action(detail=True, methods=["post"])
+    def run(self, request, pk=None):
+        report_view = self.get_object()
+        return Response(run_report_view(report_view=report_view))
+
+    @action(detail=True, methods=["get"])
+    def drilldown(self, request, pk=None):
+        report_view = self.get_object()
+        account_code = request.query_params.get("account_code")
+        if not account_code:
+            raise DRFValidationError({"account_code": "This query parameter is required."})
+
+        try:
+            if report_view.report_type == ReportView.ReportType.BALANCE_SHEET:
+                return Response(
+                    generate_report_drilldown(
+                        entity=report_view.entity,
+                        report_type=report_view.report_type,
+                        account_code=account_code,
+                        basis=report_view.basis,
+                        as_of=report_view.as_of_date,
+                    )
+                )
+            if report_view.report_type == ReportView.ReportType.PROFIT_AND_LOSS:
+                return Response(
+                    generate_report_drilldown(
+                        entity=report_view.entity,
+                        report_type=report_view.report_type,
+                        account_code=account_code,
+                        basis=report_view.basis,
+                        start_date=report_view.start_date,
+                        end_date=report_view.end_date,
+                    )
+                )
+        except DjangoValidationError as exc:
+            raise_drf_validation(exc)
+        raise DRFValidationError({"report_type": "Unsupported report type."})
+
+    @action(detail=False, methods=["get"])
+    def balance_sheet(self, request):
+        try:
+            return Response(generate_balance_sheet(entity=self.get_entity(), as_of=parse_query_date(request, "as_of")))
+        except DjangoValidationError as exc:
+            raise_drf_validation(exc)
+
+    @action(detail=False, methods=["get"])
+    def profit_and_loss(self, request):
+        start_date = parse_query_date(request, "start_date")
+        end_date = parse_query_date(request, "end_date")
+        basis = request.query_params.get("basis", "accrual")
+        try:
+            return Response(
+                generate_profit_and_loss(
+                    entity=self.get_entity(),
+                    start_date=start_date,
+                    end_date=end_date,
+                    basis=basis,
+                )
+            )
+        except DjangoValidationError as exc:
+            raise_drf_validation(exc)
+
+    @action(detail=False, methods=["get"])
+    def tax_summary(self, request):
+        return Response(tax_summary(entity=self.get_entity()))
+
+
+class TaxCodeViewSet(UnsafeMethodLimitedMixin, DefaultEntityScopedMixin, viewsets.ModelViewSet):
+    serializer_class = TaxCodeSerializer
+
+    def get_queryset(self):
+        return TaxCode.objects.filter(entity=self.get_entity()).order_by("code", "id")
+
+    def perform_create(self, serializer):
+        try:
+            serializer.save()
+        except DjangoValidationError as exc:
+            raise_drf_validation(exc)
+
+    def perform_update(self, serializer):
+        try:
+            serializer.save()
+        except DjangoValidationError as exc:
+            raise_drf_validation(exc)
