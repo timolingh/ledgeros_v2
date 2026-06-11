@@ -169,7 +169,15 @@ from apps.accounting.services.banking import (
 )
 
 entity = Entity.get_default()
-bank_account = BankAccount.objects.get(entity=entity, account_number="1111")
+cash_account = Account.objects.get(entity=entity, account_code="1000")
+
+bank_account = BankAccount.objects.create(
+    entity=entity,
+    name="Reconciliation Checking",
+    account_number="4444",
+    bank_name="Fourth Bank",
+    ledger_account=cash_account,
+)
 revenue_account = Account.objects.get(entity=entity, account_code="4000")
 
 deposit = record_bank_transaction(
@@ -303,7 +311,15 @@ from apps.accounting.services.banking import (
 )
 
 entity = Entity.get_default()
-bank_account = BankAccount.objects.get(entity=entity, account_number="1111")
+cash_account = Account.objects.get(entity=entity, account_code="1000")
+
+bank_account = BankAccount.objects.create(
+    entity=entity,
+    name="Reconciliation Checking",
+    account_number="3333",
+    bank_name="Third Bank",
+    ledger_account=cash_account,
+)
 revenue_account = Account.objects.get(entity=entity, account_code="4000")
 
 deposit = record_bank_transaction(
