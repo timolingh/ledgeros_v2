@@ -399,6 +399,7 @@ def issue_customer_credit(
         amount=amount,
         payment_date=credit.memo_date,
         account=ar_account,  # Dummy account, not used for GL in this context
+        is_credit_adjustment=True,
     )
 
     # Create payment application to reduce outstanding balance
@@ -494,6 +495,7 @@ def issue_vendor_credit(
         amount=amount,
         payment_date=credit.memo_date,
         account=ap_account,  # Dummy account, not used for GL in this context
+        is_credit_adjustment=True,
     )
 
     # Create payment application to reduce outstanding balance
