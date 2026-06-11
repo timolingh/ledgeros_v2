@@ -1,5 +1,6 @@
 from datetime import date
 from types import SimpleNamespace
+from decimal import Decimal
 
 import pytest
 from django.contrib import admin as django_admin
@@ -9,8 +10,8 @@ from django.forms.models import inlineformset_factory
 from django.contrib.auth import get_user_model
 from django.test import Client, RequestFactory
 
-from apps.accounting.admin import AccountAdmin, AccountingPeriodAdmin, JournalEntryAdmin, JournalLineInlineFormSet
-from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, JournalLine
+from apps.accounting.admin import AccountAdmin, AccountingPeriodAdmin, JournalEntryAdmin, JournalLineInlineFormSet, ReportViewAdmin, TaxCodeAdmin
+from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, JournalLine, ReportView, TaxCode
 from apps.accounting.selectors import account_balance
 from apps.accounting.services import JournalLineInput, create_accounting_period, create_and_post_journal_entry, create_draft_journal_entry, post_journal_entry, reverse_journal_entry, update_draft_journal_entry
 from apps.accounting.services.chart_import import import_chart_of_accounts
@@ -868,3 +869,43 @@ def test_admin_forms_hide_entity_and_assign_default_entity(coa, admin_class, mod
     admin_instance.save_model(request, obj, form=None, change=False)
     obj.refresh_from_db()
     assert obj.entity == entity
+
+
+@pytest.mark.django_db
+def test_reportview_and_taxcode_admin_save_new_object_in_place(coa):
+    request = RequestFactory().get("/admin/")
+    request.user = get_user_model().objects.create_superuser(username="admin-reporting", password="password", email="admin-reporting@example.com")
+    report_admin = ReportViewAdmin(ReportView, django_admin.site)
+    tax_admin = TaxCodeAdmin(TaxCode, django_admin.site)
+    entity = get_default_entity()
+    liability = Account.objects.create(
+        entity=entity,
+        account_code="2100",
+        name="Sales Tax Payable",
+        type=Account.AccountType.LIABILITY,
+        normal_balance=Account.NormalBalance.CREDIT,
+    )
+
+    report_view = ReportView(
+        entity=None,
+        name="May P&L",
+        report_type=ReportView.ReportType.PROFIT_AND_LOSS,
+        basis=ReportView.Basis.ACCRUAL,
+        start_date=date(2026, 5, 1),
+        end_date=date(2026, 5, 31),
+    )
+    report_admin.save_model(request, report_view, form=None, change=False)
+    assert report_view.pk is not None
+    assert report_view.entity == entity
+
+    tax_code = TaxCode(
+        entity=None,
+        code="CA-STD",
+        name="California sales tax",
+        rate=Decimal("0.0750"),
+        jurisdiction=TaxCode.Jurisdiction.CA,
+        liability_account=liability,
+    )
+    tax_admin.save_model(request, tax_code, form=None, change=False)
+    assert tax_code.pk is not None
+    assert tax_code.entity == entity

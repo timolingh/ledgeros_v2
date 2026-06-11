@@ -34,6 +34,7 @@ Before implementing or reviewing any epic, read and follow:
 
 - `docs/accounting-core-invariants.md`
 - `docs/epic-implementation-guardrails.md`
+- `docs/reporting-invariants.md`
 
 Every epic must include a requirement traceability matrix, explicit deferred/out-of-scope items, automated tests for implemented accounting invariants, and Docker-ready manual acceptance checks.
 

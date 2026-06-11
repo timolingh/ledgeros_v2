@@ -138,8 +138,8 @@ class ReportViewAdmin(admin.ModelAdmin):
     search_fields = ["name"]
 
     def save_model(self, request, obj, form, change):
-        save_report_view(
-            report_view=obj if change else None,
+        obj = save_report_view(
+            report_view=obj,
             entity=obj.entity if obj.entity_id else get_default_entity(),
             name=obj.name,
             report_type=obj.report_type,
@@ -162,8 +162,8 @@ class TaxCodeAdmin(admin.ModelAdmin):
     search_fields = ["code", "name"]
 
     def save_model(self, request, obj, form, change):
-        save_tax_code(
-            tax_code=obj if change else None,
+        obj = save_tax_code(
+            tax_code=obj,
             entity=obj.entity if obj.entity_id else get_default_entity(),
             code=obj.code,
             name=obj.name,

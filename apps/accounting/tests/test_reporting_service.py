@@ -170,6 +170,67 @@ def test_profit_and_loss_supports_cash_and_accrual_basis(reporting_activity):
 
 
 @pytest.mark.django_db
+def test_revenue_debit_reduces_accrual_p_and_l_revenue(reporting_ready):
+    create_accounting_period(start_date=date(2030, 1, 1), end_date=date(2030, 12, 31), name="FY2030")
+    create_and_post_journal_entry(
+        entry_date=date(2030, 5, 1),
+        description="Revenue recognition",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="100.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="100.00"),
+        ],
+    )
+    create_and_post_journal_entry(
+        entry_date=date(2030, 5, 20),
+        description="Revenue credit memo",
+        lines=[
+            JournalLineInput(account_code="4000", side="debit", amount="25.00"),
+            JournalLineInput(account_code="1000", side="credit", amount="25.00"),
+        ],
+    )
+
+    report = generate_profit_and_loss(
+        entity=reporting_ready,
+        start_date=date(2030, 5, 1),
+        end_date=date(2030, 5, 31),
+        basis="accrual",
+    )
+
+    assert report["totals"] == {"revenue": "75.00", "expense": "0.00", "net_income": "75.00"}
+
+
+@pytest.mark.django_db
+def test_period_summary_uses_only_period_activity(reporting_ready):
+    create_accounting_period(start_date=date(2032, 1, 1), end_date=date(2032, 1, 31), name="Jan 2032 Period Summary Test")
+    may = create_accounting_period(start_date=date(2032, 5, 1), end_date=date(2032, 5, 31), name="May 2032 Period Summary Test")
+
+    create_and_post_journal_entry(
+        entry_date=date(2032, 1, 15),
+        description="January activity",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="10.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="10.00"),
+        ],
+    )
+
+    create_and_post_journal_entry(
+        entry_date=date(2032, 5, 15),
+        description="May activity",
+        lines=[
+            JournalLineInput(account_code="1000", side="debit", amount="20.00"),
+            JournalLineInput(account_code="4000", side="credit", amount="20.00"),
+        ],
+    )
+
+    summary = summarize_period(period=may)
+
+    assert summary["journal_entry_count"] == 1
+    assert summary["posted_debits"] == "20.00"
+    assert summary["posted_credits"] == "20.00"
+    assert summary["balance_check"] == "0.00"
+
+
+@pytest.mark.django_db
 def test_report_drilldown_exposes_journal_entries_and_payment_applications(reporting_activity):
     accrual_detail = generate_report_drilldown(
         entity=reporting_activity["entity"],

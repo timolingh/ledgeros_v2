@@ -186,6 +186,9 @@ def _journal_line_detail_rows(*, account: Account, entity: Entity, start_date: d
 
 
 def _cash_basis_pl_from_payments(entity: Entity, start_date: date, end_date: date) -> dict[str, Any]:
+    # Cash-basis recognition is tied to payment applications, not bank deposits.
+    # If funds move from Undeposited Funds into a bank account later, that movement
+    # should not create a second revenue or expense recognition event.
     revenue_totals: dict[str, dict[str, str]] = {}
     expense_totals: dict[str, dict[str, str]] = {}
 
@@ -259,7 +262,10 @@ def _accrual_pl(entity: Entity, start_date: date, end_date: date) -> dict[str, A
         account__type__in=[Account.AccountType.REVENUE, Account.AccountType.EXPENSE],
     )
     for line in journal_lines:
-        amount = line.amount if line.account.type == Account.AccountType.EXPENSE else line.amount
+        if line.account.normal_balance == Account.NormalBalance.CREDIT:
+            amount = line.amount if line.side == JournalLine.Side.CREDIT else Decimal("0.00") - line.amount
+        else:
+            amount = line.amount if line.side == JournalLine.Side.DEBIT else Decimal("0.00") - line.amount
         bucket = rows.setdefault(line.account.account_code, _account_payload(line.account, Decimal("0.00")))
         bucket["amount"] = str(money(Decimal(bucket["amount"]) + amount))
 
@@ -402,19 +408,23 @@ def generate_report_drilldown(
 
 
 def summarize_period(*, period: AccountingPeriod) -> dict[str, Any]:
-    from apps.accounting.selectors.reporting import trial_balance_as_of
-
     journal_entries = JournalEntry.objects.filter(
         entity=period.entity,
         date__range=(period.start_date, period.end_date),
         status__in=JournalEntry.ledger_affecting_statuses(),
     )
-    trial = trial_balance_as_of(entity=period.entity, as_of=period.end_date)
+    journal_lines = JournalLine.objects.filter(
+        journal_entry__entity=period.entity,
+        journal_entry__date__range=(period.start_date, period.end_date),
+        journal_entry__status__in=JournalEntry.ledger_affecting_statuses(),
+    )
     debits = Decimal("0.00")
     credits = Decimal("0.00")
-    for row in trial:
-        debits += Decimal(row["debits"])
-        credits += Decimal(row["credits"])
+    for row in journal_lines.values("side", "amount"):
+        if row["side"] == JournalLine.Side.DEBIT:
+            debits += Decimal(row["amount"])
+        else:
+            credits += Decimal(row["amount"])
     return {
         "period_id": period.id,
         "name": period.name,
