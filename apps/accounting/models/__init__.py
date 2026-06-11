@@ -1,4 +1,5 @@
 from .accounts import Account, Entity
+from .banking import BankAccount, BankReconciliation, BankReconciliationMatch, BankStatementLine, BankTransaction
 from .ar_ap import (
     Bill,
     BillLine,
@@ -16,6 +17,11 @@ from .periods import AccountingPeriod
 
 __all__ = [
     "Account",
+    "BankAccount",
+    "BankReconciliation",
+    "BankReconciliationMatch",
+    "BankStatementLine",
+    "BankTransaction",
     "AccountingPeriod",
     "AuditLog",
     "Bill",
