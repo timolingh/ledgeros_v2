@@ -45,8 +45,9 @@ apps/accounting/
 - Draft invoices/bills do not affect balances; only posted invoices/bills create GL impact.
 - Invoice posting creates: Debit AR, Credit revenue account(s).
 - Bill posting creates: Debit expense account(s), Credit AP.
-- Customer payment application creates: Debit cash/bank, Credit AR.
-- Vendor payment application creates: Debit AP, Credit cash/bank.
+- Customer payment application creates: Debit undeposited funds, Credit AR.
+- Vendor payment application creates: Debit AP, Credit undeposited funds.
+- Funds are moved into a bank account later through the banking flow, once the deposit actually occurs.
 - Payment application creates a PaymentApplication record and updates invoice/bill status (PARTIALLY_PAID or PAID).
 - Credits reduce outstanding balances through PaymentApplication records and create reversing GL entries.
 - Customer credits reduce AR; vendor credits reduce AP.
@@ -83,9 +84,11 @@ PY
 # Create a customer
 docker compose run --rm -T web python manage.py shell <<'PY'
 from apps.accounting.models import Customer, Account, Entity
+from apps.accounting.services import get_or_create_undeposited_funds_account
 
 entity = Entity.get_default()
 ar_account = Account.objects.get(entity=entity, account_code="1100")
+undeposited = get_or_create_undeposited_funds_account(entity=entity)
 
 customer = Customer.objects.create(
     entity=entity,
@@ -95,6 +98,7 @@ customer = Customer.objects.create(
 )
 
 print(f"Created customer: {customer.customer_code} - {customer.name}")
+print(f"Clearing account: {undeposited.account_code} - {undeposited.name}")
 PY
 ```
 
@@ -148,7 +152,7 @@ from apps.accounting.services import apply_payment_to_invoice
 entity = Entity.get_default()
 customer = Customer.objects.get(customer_code="WID-001")
 invoice = Invoice.objects.get(invoice_number="INV-001")
-cash_account = Account.objects.get(entity=entity, account_code="1000")  # Cash account
+undeposited_account = Account.objects.get(entity=entity, account_code="1010")  # Undeposited Funds
 
 payment = Payment.objects.create(
     entity=entity,
@@ -156,7 +160,7 @@ payment = Payment.objects.create(
     source_id=invoice.id,
     amount=Decimal("600.00"),
     payment_date=date(2026, 5, 15),
-    account=cash_account,
+    account=undeposited_account,
 )
 
 app, entry = apply_payment_to_invoice(

@@ -19,6 +19,7 @@ from .periods import change_period_status, create_accounting_period
 from .posting import JournalLineInput, create_and_post_journal_entry, create_draft_journal_entry, post_journal_entry, update_draft_journal_entry
 from .reversal import reverse_journal_entry
 from .writes import save_account, save_accounting_period
+from .writes import get_or_create_undeposited_funds_account
 
 __all__ = [
     "JournalLineInput",
@@ -32,6 +33,7 @@ __all__ = [
     "create_and_post_journal_entry",
     "create_draft_journal_entry",
     "get_default_entity",
+    "get_or_create_undeposited_funds_account",
     "issue_customer_credit",
     "issue_vendor_credit",
     "match_bank_statement_line",

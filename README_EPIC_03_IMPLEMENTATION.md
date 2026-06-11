@@ -39,9 +39,12 @@ apps/accounting/
 - Each bank account must link to a debit-normal asset account in the same entity.
 - Bank transactions post through the linked ledger account.
 - Deposits increase the bank balance; withdrawals decrease it.
+- Customer receipts and vendor payments are first held in `Undeposited Funds`, then moved into bank cash when the actual deposit is recorded.
 - Reconciliation is per bank account, not per entity-wide cash pool.
 - Statement lines and bank transactions must stay matched one-to-one for the MVP reconciliation workflow.
 - Reconciliations remain open until statement lines are matched and the statement ending balance agrees with book balance.
+- Match validation enforces statement-line sign, amount, and date alignment against the bank transaction and reconciliation period.
+- Completed reconciliations store cleared balance as the sum of matched signed transaction amounts.
 - All banking state changes go through the service layer and create audit logs.
 - Bank account balances are calculated from posted bank transactions, not stored as denormalized totals.
 
@@ -70,12 +73,13 @@ period = create_accounting_period(
 print(f"Created period: {period.name}")
 PY
 
-# Create two cash accounts and two bank accounts for the same entity
+# Create cash, clearing, and bank accounts for the same entity
 docker compose run --rm -T web python manage.py shell <<'PY'
 from apps.accounting.models import Account, BankAccount, Entity
 
 entity = Entity.get_default()
 cash = Account.objects.get(entity=entity, account_code="1000")
+undeposited = Account.objects.get(entity=entity, account_code="1010")
 
 first_bank = BankAccount.objects.create(
     entity=entity,
@@ -93,6 +97,7 @@ second_bank = BankAccount.objects.create(
     ledger_account=cash,
 )
 
+print(f"Clearing account: {undeposited.account_code} - {undeposited.name}")
 print(f"Created bank accounts: {first_bank.name}, {second_bank.name}")
 PY
 ```
@@ -262,15 +267,15 @@ from apps.accounting.services.banking import record_bank_transaction
 
 entity = Entity.get_default()
 bank_account = BankAccount.objects.get(entity=entity, account_number="1111")
-revenue_account = Account.objects.get(entity=entity, account_code="4000")
+undeposited = Account.objects.get(entity=entity, account_code="1010")
 
 transaction = record_bank_transaction(
     bank_account=bank_account,
     transaction_date=date(2026, 5, 1),
     amount=Decimal("250.00"),
     transaction_type=BankTransaction.Type.DEPOSIT,
-    offset_account=revenue_account,
-    memo="Customer deposit",
+    offset_account=undeposited,
+    memo="Deposit from clearing",
 )
 ```
 
@@ -321,14 +326,15 @@ bank_account = BankAccount.objects.create(
     ledger_account=cash_account,
 )
 revenue_account = Account.objects.get(entity=entity, account_code="4000")
+undeposited = Account.objects.get(entity=entity, account_code="1010")
 
 deposit = record_bank_transaction(
     bank_account=bank_account,
     transaction_date=date(2026, 5, 1),
     amount=Decimal("150.00"),
     transaction_type=BankTransaction.Type.DEPOSIT,
-    offset_account=revenue_account,
-    memo="Deposit",
+    offset_account=undeposited,
+    memo="Deposit from clearing",
 )
 
 statement_line = create_bank_statement_line(
@@ -362,10 +368,11 @@ complete_bank_reconciliation(reconciliation=reconciliation)
 3. Verify each bank account links to a debit-normal asset account.
 4. Record a deposit on one bank account and confirm only that account balance changes.
 5. Record a withdrawal on the other bank account and confirm balances remain independent.
-6. Import or create statement lines for a reconciliation period.
-7. Match statement lines to bank transactions and verify duplicates are rejected.
-8. Complete the reconciliation and verify the status becomes `completed`.
-9. Confirm audit logs exist for bank account creation, bank transaction posting, statement line creation, and reconciliation completion.
+6. Confirm that customer receipts and vendor payments land in `Undeposited Funds` until a bank deposit is recorded.
+7. Import or create statement lines for a reconciliation period.
+8. Match statement lines to bank transactions and verify duplicates are rejected.
+9. Complete the reconciliation and verify the status becomes `completed`.
+10. Confirm audit logs exist for bank account creation, bank transaction posting, statement line creation, and reconciliation completion.
 
 ## Out-of-Scope Items
 

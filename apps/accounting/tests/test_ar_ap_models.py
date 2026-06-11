@@ -18,6 +18,7 @@ from apps.accounting.models import (
     PaymentApplication,
     Vendor,
 )
+from apps.accounting.services import get_or_create_undeposited_funds_account
 
 
 @pytest.fixture
@@ -84,6 +85,11 @@ def cash_account(entity):
         type=Account.AccountType.ASSET,
         normal_balance=Account.NormalBalance.DEBIT,
     )
+
+
+@pytest.fixture
+def undeposited_funds_account(entity):
+    return get_or_create_undeposited_funds_account(entity=entity)
 
 
 @pytest.fixture
@@ -559,7 +565,7 @@ class TestBill:
 class TestPayment:
     """Tests for Payment model."""
 
-    def test_create_invoice_payment(self, customer, cash_account):
+    def test_create_invoice_payment(self, customer, cash_account, undeposited_funds_account):
         """Payment for invoice can be created."""
         invoice = Invoice.objects.create(
             entity=customer.entity,
@@ -579,8 +585,9 @@ class TestPayment:
         )
         assert payment.source_type == Payment.SourceType.INVOICE
         assert payment.amount == Decimal("500.00")
+        assert payment.account == undeposited_funds_account
 
-    def test_create_bill_payment(self, vendor, cash_account):
+    def test_create_bill_payment(self, vendor, cash_account, undeposited_funds_account):
         """Payment for bill can be created."""
         bill = Bill.objects.create(
             entity=vendor.entity,
@@ -599,6 +606,7 @@ class TestPayment:
             account=cash_account,
         )
         assert payment.source_type == Payment.SourceType.BILL
+        assert payment.account == undeposited_funds_account
 
     def test_payment_clean_validates_account_entity(self, customer, cash_account):
         """Payment clean() validates account belongs to same entity."""

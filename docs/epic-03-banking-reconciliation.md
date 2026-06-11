@@ -6,7 +6,7 @@ Add basic banking and bank reconciliation support so LedgerOS can manage cash mo
 ## In Scope
 - Bank account ledger objects
 - Bank transaction recording
-- Payment receipts and vendor payments tied to bank accounts
+- Payment receipts and vendor payments tied to a clearing account first, then to bank accounts when deposited
 - Bank statement import or statement entry capture
 - Bank reconciliation workflow
 - Reconciliation status tracking
@@ -35,19 +35,24 @@ Reliable cash accounting is required for SMB accounting and is a core part of th
   - `bank_reconciliations`: id, entity_id, bank_account_id, start_date, end_date, status, statement_ending_balance, cleared_balance
   - `bank_reconciliation_matches`: reconciliation_id, statement_line_id, bank_transaction_id, matched_amount
 - Bank transaction posting should always flow through a cash/bank GL account.
-- Payment receipts and vendor payments should create both AR/AP application entries and bank cash entries.
+- Payment receipts and vendor payments should create both AR/AP application entries and a clearing-account cash entry first; the later bank deposit creates the bank cash entry.
 - Reconciliation workflow should support:
   - importing or manually entering bank statement lines,
   - matching statement lines to ledger transactions,
   - marking matched lines as cleared,
   - calculating reconciliation status and unreconciled amounts.
 - Prevent double-clearing of the same bank transaction or statement line.
+- Reconciliation matches must validate that the statement line amount sign matches the transaction type, the matched amount equals the bank transaction amount, the statement line amount equals the transaction signed amount, and both dates fall within the reconciliation period.
+- Cleared balance on completion should equal the sum of matched signed statement line amounts, which is equivalent to the sum of matched bank transaction signed amounts.
 - Cash-basis reporting should include bank cash movement and cleared bank balances as required for the period basis.
 
 ## Example Success Scenarios
-- Record a customer payment of $800 into a bank account and verify the GL entry:
-  - Debit: Bank Cash $800
+- Record a customer payment of $800 and verify the GL entry:
+  - Debit: Undeposited Funds $800
   - Credit: Accounts Receivable $800
+- Deposit those funds into a bank account and verify the later deposit entry:
+  - Debit: Bank Cash $800
+  - Credit: Undeposited Funds $800
 - Import a bank statement line for $800 and match it to the bank transaction.
 - Create a reconciliation for the period, match lines, and verify the reconciliation closes with no unmatched balance.
 - Attempt to match the same bank statement line twice and receive a validation error.

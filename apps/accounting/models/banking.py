@@ -176,7 +176,17 @@ class BankReconciliationMatch(models.Model):
             raise ValidationError({"bank_transaction": "Bank transaction must belong to the reconciliation bank account."})
         if self.reconciliation.entity_id != self.statement_line.entity_id or self.reconciliation.entity_id != self.bank_transaction.entity_id:
             raise ValidationError("Reconciliation matches must stay within the same entity.")
+        if not (self.reconciliation.start_date <= self.statement_line.statement_date <= self.reconciliation.end_date):
+            raise ValidationError({"statement_line": "Statement line date must fall within the reconciliation period."})
+        if not (self.reconciliation.start_date <= self.bank_transaction.transaction_date <= self.reconciliation.end_date):
+            raise ValidationError({"bank_transaction": "Bank transaction date must fall within the reconciliation period."})
         if self.matched_amount <= Decimal("0.00"):
             raise ValidationError({"matched_amount": "Matched amount must be positive."})
-        if self.matched_amount != abs(self.statement_line.amount):
-            raise ValidationError({"matched_amount": "Matched amount must equal the absolute statement line amount."})
+        if self.bank_transaction.transaction_type == BankTransaction.Type.DEPOSIT and self.statement_line.amount <= Decimal("0.00"):
+            raise ValidationError({"statement_line": "Deposit transactions require a positive statement line amount."})
+        if self.bank_transaction.transaction_type == BankTransaction.Type.WITHDRAWAL and self.statement_line.amount >= Decimal("0.00"):
+            raise ValidationError({"statement_line": "Withdrawal transactions require a negative statement line amount."})
+        if self.statement_line.amount != self.bank_transaction.signed_amount:
+            raise ValidationError({"statement_line": "Statement line amount must match the bank transaction signed amount."})
+        if self.matched_amount != self.bank_transaction.amount:
+            raise ValidationError({"matched_amount": "Matched amount must equal the bank transaction amount."})

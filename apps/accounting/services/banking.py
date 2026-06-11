@@ -217,6 +217,15 @@ def create_bank_reconciliation(
     return reconciliation
 
 
+def reconciliation_cleared_balance(reconciliation: BankReconciliation) -> Decimal:
+    """Calculate cleared balance from matched bank transactions within a reconciliation."""
+    matched_transactions = reconciliation.matches.select_related("bank_transaction")
+    cleared = Decimal("0.00")
+    for match in matched_transactions:
+        cleared += match.bank_transaction.signed_amount
+    return money(cleared)
+
+
 @transaction.atomic
 def match_bank_statement_line(
     *,
@@ -281,7 +290,8 @@ def complete_bank_reconciliation(
             }
         )
 
-    reconciliation.cleared_balance = book_balance
+    cleared_balance = reconciliation_cleared_balance(reconciliation)
+    reconciliation.cleared_balance = cleared_balance
     reconciliation.status = BankReconciliation.Status.COMPLETED
     reconciliation.save(update_fields=["cleared_balance", "status", "updated_at"])
     audit_success(
