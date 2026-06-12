@@ -1,0 +1,16 @@
+api_clients:
+  - client_id: api_full
+    enabled: true
+    secret_env: LEDGEROS_API_CLIENT_FULL_SECRET
+    scopes:
+      - invoices
+      - bills
+      - payments
+      - credits
+    allowed_event_types:
+      - invoice.post_requested
+      - bill.post_requested
+      - payment.post_requested
+      - credit.post_requested
+      - refund.post_requested
+      

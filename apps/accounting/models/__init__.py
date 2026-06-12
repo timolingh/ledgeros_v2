@@ -12,6 +12,7 @@ from .ar_ap import (
     Vendor,
 )
 from .audit import AuditLog
+from .integration import ApiRequestRecord
 from .journals import JournalEntry, JournalLine
 from .periods import AccountingPeriod
 from .reporting import ReportView, TaxCode
@@ -25,6 +26,7 @@ __all__ = [
     "BankTransaction",
     "AccountingPeriod",
     "AuditLog",
+    "ApiRequestRecord",
     "Bill",
     "BillLine",
     "CreditMemo",

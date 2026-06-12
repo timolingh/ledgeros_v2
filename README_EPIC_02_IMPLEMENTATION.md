@@ -60,6 +60,8 @@ apps/accounting/
 
 Starting from a running Docker environment with Epic 1 core:
 
+If you're starting from a fresh database, first import the sample chart of accounts and create an open accounting period:
+
 ```bash
 # Migrations are applied automatically when container starts
 docker compose run --rm web python manage.py migrate
@@ -112,7 +114,12 @@ from apps.accounting.models import Customer, Account, Entity, Invoice, InvoiceLi
 from apps.accounting.services import post_invoice
 
 entity = Entity.get_default()
-customer = Customer.objects.get(customer_code="WID-001")
+ar_account = Account.objects.get(entity=entity, account_code="1100")
+customer, _ = Customer.objects.update_or_create(
+    entity=entity,
+    customer_code="WID-001",
+    defaults={"name": "Widget Corp", "default_ar_account": ar_account},
+)
 revenue_account = Account.objects.get(entity=entity, account_code="4000")
 
 invoice = Invoice.objects.create(
@@ -150,7 +157,12 @@ from apps.accounting.models import Customer, Account, Entity, Invoice, Payment
 from apps.accounting.services import apply_payment_to_invoice
 
 entity = Entity.get_default()
-customer = Customer.objects.get(customer_code="WID-001")
+ar_account = Account.objects.get(entity=entity, account_code="1100")
+customer, _ = Customer.objects.update_or_create(
+    entity=entity,
+    customer_code="WID-001",
+    defaults={"name": "Widget Corp", "default_ar_account": ar_account},
+)
 invoice = Invoice.objects.get(invoice_number="INV-001")
 undeposited_account = Account.objects.get(entity=entity, account_code="1010")  # Undeposited Funds
 
@@ -244,7 +256,12 @@ from apps.accounting.models import Customer, Account, Entity, Invoice, InvoiceLi
 from apps.accounting.services import post_invoice
 
 entity = Entity.get_default()
-customer = Customer.objects.get(customer_code="ACME-001")
+ar_account = Account.objects.get(entity=entity, account_code="1100")
+customer, _ = Customer.objects.update_or_create(
+    entity=entity,
+    customer_code="ACME-001",
+    defaults={"name": "ACME Corp", "default_ar_account": ar_account},
+)
 revenue_account = Account.objects.get(entity=entity, account_code="4000")  # Revenue
 
 invoice = Invoice.objects.create(

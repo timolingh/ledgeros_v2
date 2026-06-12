@@ -104,6 +104,12 @@ class Invoice(models.Model):
         blank=True,
         help_text="External invoice number from API source, if applicable.",
     )
+    external_source_client_id = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+        help_text="External API client identifier that supplied the external invoice number.",
+    )
     date = models.DateField()
     due_date = models.DateField()
     total_amount = models.DecimalField(
@@ -119,9 +125,9 @@ class Invoice(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["entity", "invoice_number"], name="unique_invoice_number_per_entity"),
             models.UniqueConstraint(
-                fields=["entity", "external_invoice_number"],
+                fields=["entity", "external_source_client_id", "external_invoice_number"],
                 condition=Q(external_invoice_number__gt=""),
-                name="unique_external_invoice_number_per_entity",
+                name="unique_external_invoice_number_per_client_per_entity",
             ),
         ]
         ordering = ["-date", "-id"]
@@ -192,6 +198,12 @@ class Bill(models.Model):
         blank=True,
         help_text="External bill number from API source, if applicable.",
     )
+    external_source_client_id = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+        help_text="External API client identifier that supplied the external bill number.",
+    )
     date = models.DateField()
     due_date = models.DateField()
     total_amount = models.DecimalField(
@@ -207,9 +219,9 @@ class Bill(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["entity", "bill_number"], name="unique_bill_number_per_entity"),
             models.UniqueConstraint(
-                fields=["entity", "external_bill_number"],
+                fields=["entity", "external_source_client_id", "external_bill_number"],
                 condition=Q(external_bill_number__gt=""),
-                name="unique_external_bill_number_per_entity",
+                name="unique_external_bill_number_per_client_per_entity",
             ),
         ]
         ordering = ["-date", "-id"]

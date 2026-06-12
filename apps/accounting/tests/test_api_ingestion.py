@@ -1,0 +1,339 @@
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import time
+from datetime import date
+from decimal import Decimal
+
+import pytest
+from django.contrib.auth import get_user_model
+from rest_framework.test import APIClient
+
+from apps.accounting.models import ApiRequestRecord, Account, Bill, Customer, Entity, Invoice, Vendor
+from apps.accounting.services import create_accounting_period
+from apps.accounting.services.chart_import import import_chart_of_accounts
+from apps.accounting.services.entities import get_default_entity
+
+
+@pytest.fixture
+def api_client():
+    return APIClient()
+
+
+@pytest.fixture
+def api_ingestion_ready(tmp_path, monkeypatch):
+    entity = get_default_entity()
+    path = tmp_path / "coa.yml"
+    path.write_text(
+        """accounts:
+  - code: "1000"
+    name: Cash
+    type: asset
+    normal_balance: debit
+  - code: "1010"
+    name: Undeposited Funds
+    type: asset
+    normal_balance: debit
+  - code: "1100"
+    name: Accounts Receivable
+    type: asset
+    normal_balance: debit
+  - code: "2100"
+    name: Accounts Payable
+    type: liability
+    normal_balance: credit
+  - code: "4000"
+    name: Revenue
+    type: revenue
+    normal_balance: credit
+  - code: "5000"
+    name: Operating Expense
+    type: expense
+    normal_balance: debit
+""",
+        encoding="utf-8",
+    )
+    import_chart_of_accounts(path=path, entity=entity)
+    create_accounting_period(start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), name="FY2026")
+
+    ar = Account.objects.get(entity=entity, account_code="1100")
+    ap = Account.objects.get(entity=entity, account_code="2100")
+
+    customer = Customer.objects.create(
+        entity=entity,
+        name="API Ingestion Customer",
+        customer_code="API-CUST-001",
+        default_ar_account=ar,
+    )
+    vendor = Vendor.objects.create(
+        entity=entity,
+        name="API Ingestion Vendor",
+        vendor_code="API-VEND-001",
+        default_ap_account=ap,
+    )
+
+    monkeypatch.setenv("LEDGEROS_API_CLIENT_FULL_SECRET", "full-secret")
+    monkeypatch.setenv("LEDGEROS_API_CLIENT_INVOICE_ONLY_SECRET", "invoice-secret")
+    config_path = tmp_path / "api_clients.yml"
+    config_path.write_text(
+        """api_clients:
+  - client_id: api_full
+    enabled: true
+    secret_env: LEDGEROS_API_CLIENT_FULL_SECRET
+    scopes:
+      - invoices
+      - bills
+      - payments
+      - credits
+    allowed_event_types:
+      - invoice.post_requested
+      - bill.post_requested
+      - payment.post_requested
+      - credit.post_requested
+      - refund.post_requested
+  - client_id: api_invoice_only
+    enabled: true
+    secret_env: LEDGEROS_API_CLIENT_INVOICE_ONLY_SECRET
+    scopes:
+      - invoices
+    allowed_event_types:
+      - invoice.post_requested
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LEDGEROS_API_CLIENTS_CONFIG", str(config_path))
+
+    return {
+        "entity": entity,
+        "customer": customer,
+        "vendor": vendor,
+        "clients": {
+            "api_full": "full-secret",
+            "api_invoice_only": "invoice-secret",
+        },
+    }
+
+
+def _signed_headers(*, client_id: str, secret: str, path: str, payload: dict, idempotency_key: str, nonce: str | None = None) -> dict[str, str]:
+    nonce = nonce or f"nonce-{idempotency_key}"
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    body_hash = hashlib.sha256(body).hexdigest()
+    timestamp = str(int(time.time()))
+    message = "\n".join([client_id, "POST", path, timestamp, nonce, body_hash]).encode("utf-8")
+    signature = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+    return {
+        "HTTP_X_LEDGEROS_CLIENT_ID": client_id,
+        "HTTP_X_LEDGEROS_TIMESTAMP": timestamp,
+        "HTTP_X_LEDGEROS_NONCE": nonce,
+        "HTTP_X_LEDGEROS_SIGNATURE": signature,
+        "HTTP_IDEMPOTENCY_KEY": idempotency_key,
+    }
+
+
+@pytest.mark.django_db
+def test_invoice_submission_is_idempotent(api_client, api_ingestion_ready):
+    payload = {
+        "customer_code": "API-CUST-001",
+        "external_invoice_number": "EXT-INV-001",
+        "invoice_date": "2026-05-01",
+        "due_date": "2026-06-01",
+        "total_amount": "100.00",
+        "lines": [
+            {"account_code": "4000", "line_description": "Revenue", "amount": "100.00"},
+        ],
+    }
+    headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/invoices/",
+        payload=payload,
+        idempotency_key="invoice-001",
+    )
+
+    first = api_client.post("/api/v1/invoices/", payload, format="json", **headers)
+    second = api_client.post("/api/v1/invoices/", payload, format="json", **headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.data == second.data
+    assert first.data["invoice"]["external_invoice_number"] == "EXT-INV-001"
+    assert first.data["invoice"]["external_source_client_id"] == "api_full"
+    assert Invoice.objects.get(external_source_client_id="api_full", external_invoice_number="EXT-INV-001").status == Invoice.Status.POSTED
+    assert ApiRequestRecord.objects.filter(client_id="api_full", event_type="invoice.post_requested").count() == 1
+
+
+@pytest.mark.django_db
+def test_same_external_invoice_number_is_allowed_for_different_clients(api_client, api_ingestion_ready):
+    payload = {
+        "customer_code": "API-CUST-001",
+        "external_invoice_number": "EXT-SHARED-001",
+        "invoice_date": "2026-05-02",
+        "due_date": "2026-06-02",
+        "total_amount": "50.00",
+        "lines": [
+            {"account_code": "4000", "line_description": "Revenue", "amount": "50.00"},
+        ],
+    }
+    headers_one = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/invoices/",
+        payload=payload,
+        idempotency_key="invoice-shared-1",
+    )
+    headers_two = _signed_headers(
+        client_id="api_invoice_only",
+        secret=api_ingestion_ready["clients"]["api_invoice_only"],
+        path="/api/v1/invoices/",
+        payload=payload,
+        idempotency_key="invoice-shared-2",
+    )
+
+    first = api_client.post("/api/v1/invoices/", payload, format="json", **headers_one)
+    second = api_client.post("/api/v1/invoices/", payload, format="json", **headers_two)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert Invoice.objects.filter(external_invoice_number="EXT-SHARED-001").count() == 2
+
+
+@pytest.mark.django_db
+def test_payment_submission_posts_and_reduces_balance(api_client, api_ingestion_ready):
+    invoice_payload = {
+        "customer_code": "API-CUST-001",
+        "external_invoice_number": "EXT-PAY-001",
+        "invoice_date": "2026-05-03",
+        "due_date": "2026-06-03",
+        "total_amount": "75.00",
+        "lines": [
+            {"account_code": "4000", "line_description": "Revenue", "amount": "75.00"},
+        ],
+    }
+    invoice_headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/invoices/",
+        payload=invoice_payload,
+        idempotency_key="invoice-pay-001",
+    )
+    invoice_response = api_client.post("/api/v1/invoices/", invoice_payload, format="json", **invoice_headers)
+    assert invoice_response.status_code == 201
+
+    payment_payload = {
+        "source_type": "invoice",
+        "source_reference": "EXT-PAY-001",
+        "payment_date": "2026-05-10",
+        "amount": "75.00",
+    }
+    payment_headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/payments/",
+        payload=payment_payload,
+        idempotency_key="payment-001",
+    )
+    payment_response = api_client.post("/api/v1/payments/", payment_payload, format="json", **payment_headers)
+
+    invoice = Invoice.objects.get(external_source_client_id="api_full", external_invoice_number="EXT-PAY-001")
+    assert payment_response.status_code == 201
+    assert payment_response.data["payment"]["amount"] == "75.00"
+    assert invoice.status == Invoice.Status.PAID
+    assert invoice.outstanding_balance() == Decimal("0.00")
+
+
+@pytest.mark.django_db
+def test_credit_and_refund_submissions_create_credit_memos(api_client, api_ingestion_ready):
+    bill_payload = {
+        "vendor_code": "API-VEND-001",
+        "external_bill_number": "EXT-BILL-001",
+        "bill_date": "2026-05-04",
+        "due_date": "2026-06-04",
+        "total_amount": "120.00",
+        "lines": [
+            {"account_code": "5000", "line_description": "Expense", "amount": "120.00"},
+        ],
+    }
+    bill_headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/bills/",
+        payload=bill_payload,
+        idempotency_key="bill-001",
+    )
+    bill_response = api_client.post("/api/v1/bills/", bill_payload, format="json", **bill_headers)
+    assert bill_response.status_code == 201
+
+    credit_payload = {
+        "source_type": "bill",
+        "source_reference": "EXT-BILL-001",
+        "credit_date": "2026-05-11",
+        "amount": "20.00",
+        "reason": "Vendor rebate",
+    }
+    credit_headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/credits/",
+        payload=credit_payload,
+        idempotency_key="credit-001",
+    )
+    credit_response = api_client.post("/api/v1/credits/", credit_payload, format="json", **credit_headers)
+
+    refund_payload = {
+        "source_type": "bill",
+        "source_reference": "EXT-BILL-001",
+        "credit_date": "2026-05-12",
+        "amount": "10.00",
+        "reason": "Customer refund",
+    }
+    refund_headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/refunds/",
+        payload=refund_payload,
+        idempotency_key="refund-001",
+    )
+    refund_response = api_client.post("/api/v1/refunds/", refund_payload, format="json", **refund_headers)
+
+    assert credit_response.status_code == 201
+    assert credit_response.data["credit_memo"]["type"] == "vendor"
+    assert refund_response.status_code == 201
+    assert refund_response.data["event_type"] == "refund.post_requested"
+    assert Bill.objects.get(external_source_client_id="api_full", external_bill_number="EXT-BILL-001").status in {Bill.Status.POSTED, Bill.Status.PARTIALLY_PAID, Bill.Status.PAID}
+
+
+@pytest.mark.django_db
+def test_client_scope_is_enforced(api_client, api_ingestion_ready):
+    payload = {
+        "customer_code": "API-CUST-001",
+        "external_invoice_number": "EXT-SCOPE-001",
+        "invoice_date": "2026-05-13",
+        "due_date": "2026-06-13",
+        "total_amount": "30.00",
+        "lines": [
+            {"account_code": "4000", "line_description": "Revenue", "amount": "30.00"},
+        ],
+    }
+    headers = _signed_headers(
+        client_id="api_invoice_only",
+        secret=api_ingestion_ready["clients"]["api_invoice_only"],
+        path="/api/v1/payments/",
+        payload={
+            "source_type": "invoice",
+            "source_reference": "EXT-SCOPE-001",
+            "payment_date": "2026-05-14",
+            "amount": "30.00",
+        },
+        idempotency_key="payment-scope-001",
+    )
+
+    response = api_client.post(
+        "/api/v1/payments/",
+        {"source_type": "invoice", "source_reference": "EXT-SCOPE-001", "payment_date": "2026-05-14", "amount": "30.00"},
+        format="json",
+        **headers,
+    )
+
+    assert response.status_code == 403

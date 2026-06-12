@@ -3,11 +3,22 @@ from __future__ import annotations
 from datetime import date
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.exceptions import ValidationError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.exceptions import MethodNotAllowed, ValidationError as DRFValidationError
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
+from apps.accounting.api.authentication import ApiClientAuthentication
+from apps.accounting.api.ingestion_serializers import (
+    ApiBillCreateSerializer,
+    ApiCreditCreateSerializer,
+    ApiInvoiceCreateSerializer,
+    ApiPaymentCreateSerializer,
+)
 from apps.accounting.api.serializers import (
     AccountSerializer,
     AccountingPeriodSerializer,
@@ -21,6 +32,7 @@ from apps.accounting.api.serializers import (
     TaxCodeSerializer,
 )
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, ReportView, TaxCode
+from apps.accounting.services.api_ingestion import submit_bill_event, submit_credit_event, submit_invoice_event, submit_payment_event
 from apps.accounting.services.reporting import (
     generate_balance_sheet,
     generate_profit_and_loss,
@@ -49,6 +61,50 @@ def parse_query_date(request, field_name: str) -> date:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise DRFValidationError({field_name: "Enter a valid date in YYYY-MM-DD format."}) from exc
+
+
+def _get_idempotency_key(request) -> str:
+    header_value = request.headers.get("Idempotency-Key", "").strip()
+    if header_value:
+        return header_value
+    payload_value = str(request.data.get("idempotency_key", "")).strip()
+    if payload_value:
+        return payload_value
+    raise DRFValidationError({"idempotency_key": "This field is required in the Idempotency-Key header or payload."})
+
+
+class ApiSubmissionView(APIView):
+    authentication_classes = [ApiClientAuthentication]
+    permission_classes = [IsAuthenticated]
+    serializer_class = None
+    required_scope = ""
+    event_type = ""
+    service_func = None
+
+    def _authorize_client(self, request) -> None:
+        principal = request.user
+        if self.required_scope not in getattr(principal, "scopes", ()):
+            raise PermissionDenied("API client is not allowed to perform this action.")
+        if self.event_type not in getattr(principal, "allowed_event_types", ()):
+            raise PermissionDenied("API client is not allowed to submit this event type.")
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self._authorize_client(request)
+        idempotency_key = _get_idempotency_key(request)
+        auth_context = request.auth
+        nonce = getattr(auth_context, "nonce", "") or f"api-key:{self.event_type}:{idempotency_key}"
+        try:
+            response_status_code, response_payload = self.service_func(
+                client_id=request.user.client_id,
+                idempotency_key=idempotency_key,
+                nonce=nonce,
+                payload=serializer.validated_data,
+            )
+        except DjangoValidationError as exc:
+            raise_drf_validation(exc)
+        return Response(response_payload, status=response_status_code)
 
 
 class DefaultEntityScopedMixin:
@@ -305,3 +361,56 @@ class TaxCodeViewSet(UnsafeMethodLimitedMixin, DefaultEntityScopedMixin, viewset
             serializer.save()
         except DjangoValidationError as exc:
             raise_drf_validation(exc)
+
+
+class InvoiceSubmissionView(ApiSubmissionView):
+    serializer_class = ApiInvoiceCreateSerializer
+    required_scope = "invoices"
+    event_type = "invoice.post_requested"
+    service_func = staticmethod(submit_invoice_event)
+
+
+class BillSubmissionView(ApiSubmissionView):
+    serializer_class = ApiBillCreateSerializer
+    required_scope = "bills"
+    event_type = "bill.post_requested"
+    service_func = staticmethod(submit_bill_event)
+
+
+class PaymentSubmissionView(ApiSubmissionView):
+    serializer_class = ApiPaymentCreateSerializer
+    required_scope = "payments"
+    event_type = "payment.post_requested"
+    service_func = staticmethod(submit_payment_event)
+
+
+class CreditSubmissionView(ApiSubmissionView):
+    serializer_class = ApiCreditCreateSerializer
+    required_scope = "credits"
+    event_type = "credit.post_requested"
+    service_func = staticmethod(submit_credit_event)
+
+
+class RefundSubmissionView(ApiSubmissionView):
+    serializer_class = ApiCreditCreateSerializer
+    required_scope = "credits"
+    event_type = "refund.post_requested"
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self._authorize_client(request)
+        idempotency_key = _get_idempotency_key(request)
+        auth_context = request.auth
+        nonce = getattr(auth_context, "nonce", "") or f"api-key:{self.event_type}:{idempotency_key}"
+        try:
+            response_status_code, response_payload = submit_credit_event(
+                client_id=request.user.client_id,
+                idempotency_key=idempotency_key,
+                nonce=nonce,
+                payload=serializer.validated_data,
+                event_type=self.event_type,
+            )
+        except DjangoValidationError as exc:
+            raise_drf_validation(exc)
+        return Response(response_payload, status=response_status_code)
