@@ -101,5 +101,5 @@ One of the product goals is safe, reliable external integration without owning t
 - Epic 2: AR/AP
 
 ## Approval
-- Status: **Pending**
-- Approval required before any code is built against this epic.
+- Status: **Implemented**
+- The approved MVP API ingestion scope is now built. Bank events remain deferred to a later epic or expansion.

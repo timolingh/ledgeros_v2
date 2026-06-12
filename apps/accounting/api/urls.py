@@ -5,9 +5,14 @@ from apps.accounting.api.views import (
     AccountViewSet,
     AccountingPeriodViewSet,
     AuditLogViewSet,
+    BillSubmissionView,
     EntityViewSet,
+    CreditSubmissionView,
     JournalEntryViewSet,
+    InvoiceSubmissionView,
+    PaymentSubmissionView,
     ReportViewSet,
+    RefundSubmissionView,
     TaxCodeViewSet,
 )
 
@@ -20,4 +25,11 @@ router.register("reports", ReportViewSet, basename="report")
 router.register("tax-codes", TaxCodeViewSet, basename="tax-code")
 router.register("audit-logs", AuditLogViewSet, basename="audit-log")
 
-urlpatterns = [path("", include(router.urls))]
+urlpatterns = [
+    path("invoices/", InvoiceSubmissionView.as_view(), name="api-invoice-submission"),
+    path("bills/", BillSubmissionView.as_view(), name="api-bill-submission"),
+    path("payments/", PaymentSubmissionView.as_view(), name="api-payment-submission"),
+    path("credits/", CreditSubmissionView.as_view(), name="api-credit-submission"),
+    path("refunds/", RefundSubmissionView.as_view(), name="api-refund-submission"),
+    path("", include(router.urls)),
+]
