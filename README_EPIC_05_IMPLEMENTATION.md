@@ -125,6 +125,22 @@ export LEDGEROS_API_CLIENT_INVOICE_ONLY_SECRET=invoice-secret
 export LEDGEROS_API_CLIENTS_CONFIG=/path/to/api_clients.yml
 ```
 
+If you're starting from a fresh database, load the chart of accounts and create an open period first:
+
+```bash
+docker compose run --rm web python manage.py import_coa config/sample_chart_of_accounts.yml
+docker compose run --rm -T web python manage.py shell <<'PY'
+from datetime import date
+from apps.accounting.services import create_accounting_period
+
+create_accounting_period(
+    start_date=date(2026, 1, 1),
+    end_date=date(2026, 12, 31),
+    name="FY2026",
+)
+PY
+```
+
 Submit an invoice:
 
 ```bash
@@ -136,7 +152,12 @@ from apps.accounting.models import Account, Customer, Entity, Invoice, InvoiceLi
 from apps.accounting.services import post_invoice
 
 entity = Entity.get_default()
-customer = Customer.objects.get(entity=entity, customer_code="API-CUST-001")
+ar_account = Account.objects.get(entity=entity, account_code="1100")
+customer, _ = Customer.objects.update_or_create(
+    entity=entity,
+    customer_code="API-CUST-001",
+    defaults={"name": "API Ingestion Customer", "default_ar_account": ar_account},
+)
 revenue = Account.objects.get(entity=entity, account_code="4000")
 
 invoice = Invoice.objects.create(

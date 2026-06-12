@@ -34,8 +34,8 @@ def post_invoice(*, invoice: Invoice, user: User | None = None, source: str = "m
     """
     Post an invoice by creating a journal entry.
 
-    Debit: Accounts Receivable (from invoice.customer.default_ar_account or first invoice line)
-    Credit: Revenue accounts (from invoice lines)
+    Debit: Accounts Receivable from invoice.customer.default_ar_account
+    Credit: Revenue accounts from invoice lines
 
     Returns the created journal entry.
     """
@@ -45,7 +45,7 @@ def post_invoice(*, invoice: Invoice, user: User | None = None, source: str = "m
     if not invoice.lines.exists():
         raise ValidationError("Invoice must have at least one line to post.")
 
-    # Determine AR account (use customer default or fall back to first line AR account)
+    # Require the customer-level AR account; invoice lines only provide the revenue side.
     ar_account = invoice.customer.default_ar_account
     if not ar_account:
         raise ValidationError(f"Customer {invoice.customer.customer_code} has no default AR account configured.")
@@ -104,8 +104,8 @@ def post_bill(*, bill: Bill, user: User | None = None, source: str = "manual") -
     """
     Post a bill by creating a journal entry.
 
-    Debit: Expense accounts (from bill lines)
-    Credit: Accounts Payable (from bill.vendor.default_ap_account or first bill line)
+    Debit: Expense accounts from bill lines
+    Credit: Accounts Payable from bill.vendor.default_ap_account
 
     Returns the created journal entry.
     """
@@ -115,7 +115,7 @@ def post_bill(*, bill: Bill, user: User | None = None, source: str = "manual") -
     if not bill.lines.exists():
         raise ValidationError("Bill must have at least one line to post.")
 
-    # Determine AP account (use vendor default or fall back to first line AP account)
+    # Require the vendor-level AP account; bill lines only provide the expense side.
     ap_account = bill.vendor.default_ap_account
     if not ap_account:
         raise ValidationError(f"Vendor {bill.vendor.vendor_code} has no default AP account configured.")
