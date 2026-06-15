@@ -190,6 +190,17 @@ Do not claim completion without tests unless explicitly instructed to produce a 
 
 ## 12. Required Docker checks
 
+Always run the application and test commands in containers.
+
+Use the `web` service for Django runtime and checks:
+
+```bash
+docker compose up web
+docker compose run --rm web python manage.py check
+docker compose run --rm web python manage.py makemigrations --check --dry-run
+docker compose run --rm web pytest
+```
+
 Before handoff, run:
 
 ```bash

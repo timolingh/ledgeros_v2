@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+from django.db import connection
+from django.db.utils import OperationalError
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.exceptions import ValidationError
 from rest_framework import status, viewsets
@@ -105,6 +107,18 @@ class ApiSubmissionView(APIView):
         except DjangoValidationError as exc:
             raise_drf_validation(exc)
         return Response(response_payload, status=response_status_code)
+
+
+class HealthCheckView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request, *args, **kwargs):
+        try:
+            connection.ensure_connection()
+        except OperationalError:
+            return Response({"status": "unhealthy"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"status": "ok"})
 
 
 class DefaultEntityScopedMixin:

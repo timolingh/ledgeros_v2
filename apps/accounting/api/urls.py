@@ -13,6 +13,7 @@ from apps.accounting.api.views import (
     PaymentSubmissionView,
     ReportViewSet,
     RefundSubmissionView,
+    HealthCheckView,
     TaxCodeViewSet,
 )
 
@@ -26,6 +27,7 @@ router.register("tax-codes", TaxCodeViewSet, basename="tax-code")
 router.register("audit-logs", AuditLogViewSet, basename="audit-log")
 
 urlpatterns = [
+    path("health/", HealthCheckView.as_view(), name="api-health-check"),
     path("invoices/", InvoiceSubmissionView.as_view(), name="api-invoice-submission"),
     path("bills/", BillSubmissionView.as_view(), name="api-bill-submission"),
     path("payments/", PaymentSubmissionView.as_view(), name="api-payment-submission"),

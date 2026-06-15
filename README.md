@@ -15,6 +15,12 @@ LedgerOS currently includes:
 - External API ingestion for invoices, bills, payments, credits, and refunds using configured API clients, HMAC authentication, scopes, event types, idempotency, and response replay.
 - Docker Compose local runtime with Django and PostgreSQL.
 
+Development and verification are Docker-first:
+
+- Run the app in `docker compose`.
+- Run Django checks and tests in the `web` container.
+- Do not rely on host-side Python for normal development or validation.
+
 ## Quick start
 
 ### 1. Configure environment
