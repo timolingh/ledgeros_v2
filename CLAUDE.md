@@ -38,6 +38,15 @@ Before implementing or reviewing any epic, read and follow:
 
 Every epic must include a requirement traceability matrix, explicit deferred/out-of-scope items, automated tests for implemented accounting invariants, and Docker-ready manual acceptance checks.
 
+## Runtime Policy
+
+Run the application and all validation from containers.
+
+- Start the app with Docker Compose.
+- Run tests and Django management checks inside the `web` service container.
+- Do not assume host Python, host dependencies, or host test execution are available.
+- If a command can be run in the container, use the container path first.
+
 ## Anti-Slop Engineering Principles
 
 1. **Run the code, not just the generator.**  

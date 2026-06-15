@@ -2,8 +2,10 @@ from datetime import date
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.db.utils import OperationalError
 from rest_framework.test import APIClient
 
+from apps.accounting.api.views import connection
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, JournalEntry
 from apps.accounting.services import create_accounting_period
 from apps.accounting.services.chart_import import import_chart_of_accounts
@@ -54,6 +56,27 @@ def create_draft_via_api(api_client):
     )
     assert response.status_code == 201
     return response.data["id"]
+
+
+@pytest.mark.django_db
+def test_health_check_endpoint_is_available(api_client):
+    response = api_client.get("/api/v1/health/")
+
+    assert response.status_code == 200
+    assert response.data == {"status": "ok"}
+
+
+@pytest.mark.django_db
+def test_health_check_endpoint_returns_unhealthy_on_database_error(api_client, monkeypatch):
+    def raise_operational_error():
+        raise OperationalError("db down")
+
+    monkeypatch.setattr(connection, "ensure_connection", raise_operational_error)
+
+    response = api_client.get("/api/v1/health/")
+
+    assert response.status_code == 503
+    assert response.data == {"status": "unhealthy"}
 
 
 @pytest.mark.django_db
