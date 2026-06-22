@@ -83,11 +83,13 @@ def api_ingestion_ready(tmp_path, monkeypatch):
     enabled: true
     secret_env: LEDGEROS_API_CLIENT_FULL_SECRET
     scopes:
+      - customers
       - invoices
       - bills
       - payments
       - credits
     allowed_event_types:
+      - customer.upsert_requested
       - invoice.post_requested
       - bill.post_requested
       - payment.post_requested
@@ -162,6 +164,70 @@ def test_invoice_submission_is_idempotent(api_client, api_ingestion_ready):
     assert first.data["invoice"]["external_source_client_id"] == "api_full"
     assert Invoice.objects.get(external_source_client_id="api_full", external_invoice_number="EXT-INV-001").status == Invoice.Status.POSTED
     assert ApiRequestRecord.objects.filter(client_id="api_full", event_type="invoice.post_requested").count() == 1
+
+
+@pytest.mark.django_db
+def test_customer_submission_is_idempotent(api_client, api_ingestion_ready):
+    payload = {
+        "customer_code": "CUST-001",
+        "name": "Tenant One",
+        "default_ar_account_code": "1100",
+    }
+    headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/customers/",
+        payload=payload,
+        idempotency_key="customer-001",
+    )
+
+    first = api_client.post("/api/v1/customers/", payload, format="json", **headers)
+    second = api_client.post("/api/v1/customers/", payload, format="json", **headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.data == second.data
+    assert first.data["customer"]["customer_code"] == "CUST-001"
+    assert first.data["customer"]["default_ar_account_code"] == "1100"
+    assert Customer.objects.filter(customer_code="CUST-001").count() == 1
+    assert ApiRequestRecord.objects.filter(client_id="api_full", event_type="customer.upsert_requested").count() == 1
+
+
+@pytest.mark.django_db
+def test_customer_upsert_updates_existing_customer_by_code(api_client, api_ingestion_ready):
+    create_payload = {
+        "customer_code": "CUST-UPDATE",
+        "name": "Original Tenant",
+        "default_ar_account_code": "1100",
+    }
+    create_headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/customers/",
+        payload=create_payload,
+        idempotency_key="customer-update-001",
+    )
+    create_response = api_client.post("/api/v1/customers/", create_payload, format="json", **create_headers)
+    assert create_response.status_code == 201
+
+    update_payload = {
+        "customer_code": "CUST-UPDATE",
+        "name": "Updated Tenant",
+    }
+    update_headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/customers/",
+        payload=update_payload,
+        idempotency_key="customer-update-002",
+    )
+    update_response = api_client.post("/api/v1/customers/", update_payload, format="json", **update_headers)
+
+    assert update_response.status_code == 200
+    assert update_response.data["customer"]["name"] == "Updated Tenant"
+    customer = Customer.objects.get(customer_code="CUST-UPDATE")
+    assert customer.name == "Updated Tenant"
+    assert customer.default_ar_account.account_code == "1100"
 
 
 @pytest.mark.django_db

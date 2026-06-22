@@ -12,7 +12,7 @@ Implemented domains:
 - AR/AP: customers, vendors, invoices, bills, payments, payment applications, credits.
 - Banking and reconciliation: bank accounts, transactions, statement lines, reconciliations, matches.
 - Reporting and tax: saved report views, tax codes, balance sheet, profit and loss, drill-downs, period summary, tax summary.
-- External API ingestion: API client config, HMAC authentication, scopes, event types, idempotency records, response replay, invoice/bill/payment/credit/refund submissions.
+- External API ingestion: API client config, HMAC authentication, scopes, event types, idempotency records, response replay, customer/invoice/bill/payment/credit/refund submissions.
 
 ## 2. Project layout
 
@@ -229,6 +229,7 @@ Implemented route families include:
 /reports/
 /tax-codes/
 /audit-logs/
+/customers/
 /invoices/
 /bills/
 /payments/
@@ -256,6 +257,7 @@ Epic 5 uses a hybrid surface:
 Current write endpoints:
 
 ```text
+POST /api/v1/customers/ -> customer.upsert_requested
 POST /api/v1/invoices/  -> invoice.post_requested
 POST /api/v1/bills/     -> bill.post_requested
 POST /api/v1/payments/  -> payment.post_requested
