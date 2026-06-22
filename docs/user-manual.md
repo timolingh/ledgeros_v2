@@ -5,7 +5,7 @@ This manual is for technically competent users setting up and operating a minimu
 LedgerOS currently supports two client-interface patterns:
 
 1. A transitional human interface through Django Admin for setup, inspection, and early internal testing.
-2. A machine-facing API integration client for external systems submitting invoices, bills, payments, credits, and refunds.
+2. A machine-facing API integration client for external systems submitting customers, invoices, bills, payments, credits, and refunds.
 
 For production bookkeeping by a non-technical bookkeeper, the recommended path is a dedicated bookkeeper-facing UI built on top of the backend. Requirements for that UI are included below so an agent can implement it safely.
 
@@ -445,11 +445,13 @@ api_clients:
     enabled: true
     secret_env: LEDGEROS_API_CLIENT_FULL_SECRET
     scopes:
+      - customers
       - invoices
       - bills
       - payments
       - credits
     allowed_event_types:
+      - customer.upsert_requested
       - invoice.post_requested
       - bill.post_requested
       - payment.post_requested
@@ -662,6 +664,7 @@ Requirements:
 - Include tests for signature generation and idempotency retry behavior.
 
 Supported endpoints:
+- POST /api/v1/customers/
 - POST /api/v1/invoices/
 - POST /api/v1/bills/
 - POST /api/v1/payments/

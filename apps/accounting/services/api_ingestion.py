@@ -142,6 +142,24 @@ def _find_customer(*, entity: Entity, customer_code: str) -> Customer:
         raise ValidationError({"customer_code": "Unknown customer."}) from exc
 
 
+def _build_customer_payload(customer: Customer, *, client_id: str) -> dict[str, Any]:
+    return {
+        "client_id": client_id,
+        "customer": {
+            "id": customer.id,
+            "customer_code": customer.customer_code,
+            "name": customer.name,
+            "status": customer.status,
+            "default_ar_account_code": (
+                customer.default_ar_account.account_code if customer.default_ar_account_id else ""
+            ),
+            "default_ar_account_name": (
+                customer.default_ar_account.name if customer.default_ar_account_id else ""
+            ),
+        },
+    }
+
+
 def _find_vendor(*, entity: Entity, vendor_code: str) -> Vendor:
     try:
         return Vendor.objects.get(entity=entity, vendor_code=vendor_code)
@@ -255,6 +273,61 @@ def _build_credit_payload(*, credit: CreditMemo, journal_entry: JournalEntry, cl
             "status": journal_entry.status,
         },
     }
+
+
+@transaction.atomic
+def submit_customer_event(*, client_id: str, idempotency_key: str, nonce: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    entity = get_default_entity()
+    customer_code = payload["customer_code"]
+    customer_defaults: dict[str, Any] = {
+        "name": payload["name"],
+        "status": payload.get("status", Customer.Status.ACTIVE),
+    }
+    if payload.get("default_ar_account"):
+        customer_defaults["default_ar_account"] = payload["default_ar_account"]
+
+    def create_response():
+        customer, created = Customer.objects.get_or_create(
+            entity=entity,
+            customer_code=customer_code,
+            defaults=customer_defaults,
+        )
+        if not created:
+            customer.name = payload["name"]
+            customer.status = payload.get("status", customer.status)
+            if payload.get("default_ar_account"):
+                customer.default_ar_account = payload["default_ar_account"]
+            elif customer.default_ar_account_id is None:
+                raise ValidationError(
+                    {
+                        "default_ar_account_code": (
+                            "A default AR account code is required when creating a customer."
+                        )
+                    }
+                )
+            customer.full_clean()
+            customer.save()
+        elif customer.default_ar_account_id is None:
+            raise ValidationError(
+                {
+                    "default_ar_account_code": (
+                        "A default AR account code is required when creating a customer."
+                    )
+                }
+            )
+
+        response_payload = _build_customer_payload(customer, client_id=client_id)
+        return 201 if created else 200, response_payload, "Customer", customer.id, None
+
+    return _submit_api_request(
+        entity=entity,
+        client_id=client_id,
+        event_type="customer.upsert_requested",
+        idempotency_key=idempotency_key,
+        nonce=nonce,
+        request_payload=payload,
+        create_response=create_response,
+    )
 
 
 def _submit_api_request(

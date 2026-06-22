@@ -17,6 +17,7 @@ from rest_framework.views import APIView
 from apps.accounting.api.authentication import ApiClientAuthentication
 from apps.accounting.api.ingestion_serializers import (
     ApiBillCreateSerializer,
+    ApiCustomerUpsertSerializer,
     ApiCreditCreateSerializer,
     ApiInvoiceCreateSerializer,
     ApiPaymentCreateSerializer,
@@ -34,7 +35,7 @@ from apps.accounting.api.serializers import (
     TaxCodeSerializer,
 )
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, ReportView, TaxCode
-from apps.accounting.services.api_ingestion import submit_bill_event, submit_credit_event, submit_invoice_event, submit_payment_event
+from apps.accounting.services.api_ingestion import submit_bill_event, submit_customer_event, submit_credit_event, submit_invoice_event, submit_payment_event
 from apps.accounting.services.reporting import (
     generate_balance_sheet,
     generate_profit_and_loss,
@@ -119,6 +120,13 @@ class HealthCheckView(APIView):
         except OperationalError:
             return Response({"status": "unhealthy"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({"status": "ok"})
+
+
+class CustomerUpsertView(ApiSubmissionView):
+    serializer_class = ApiCustomerUpsertSerializer
+    required_scope = "customers"
+    event_type = "customer.upsert_requested"
+    service_func = staticmethod(submit_customer_event)
 
 
 class DefaultEntityScopedMixin:
