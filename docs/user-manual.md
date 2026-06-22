@@ -441,15 +441,6 @@ The repo includes `api_clients.yml`:
 
 ```yaml
 api_clients:
-  - client_id: propertyledger
-    enabled: true
-    secret_env: LEDGEROS_API_CLIENT_PROPERTYLEDGER_SECRET
-    scopes:
-      - customers
-      - invoices
-    allowed_event_types:
-      - customer.upsert_requested
-      - invoice.post_requested
   - client_id: api_full
     enabled: true
     secret_env: LEDGEROS_API_CLIENT_FULL_SECRET

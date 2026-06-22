@@ -33,7 +33,6 @@ For local API client testing, also configure the API client config path and secr
 
 ```bash
 LEDGEROS_API_CLIENTS_CONFIG=/app/api_clients.yml
-LEDGEROS_API_CLIENT_PROPERTYLEDGER_SECRET=replace-this-with-a-local-secret
 LEDGEROS_API_CLIENT_FULL_SECRET=replace-this-with-a-local-secret
 ```
 
