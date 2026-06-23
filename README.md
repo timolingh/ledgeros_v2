@@ -102,10 +102,15 @@ docker compose run --rm web pytest
 Use these convenience targets for the common Docker lifecycle:
 
 ```bash
-make down   # Bring the system down
-make reset  # Bring the system down and remove volumes
-make up     # Start db, run migrations, then bring web up
-make test   # Run tests
+make help     # Show the available workflow targets
+make up       # Start db, run migrations, then bring web up
+make down     # Bring the system down
+make reset    # Bring the system down and remove volumes
+make build    # Build Docker images
+make migrate  # Run Django migrations in Docker
+make test     # Run tests
+make check    # Run Django checks in Docker
+make shell    # Open a Django shell in the web container
 ```
 
 ## Documentation map
