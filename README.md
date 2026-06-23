@@ -79,6 +79,8 @@ Open:
 - Django Admin: `http://localhost:8000/admin/`
 - API root: `http://localhost:8000/api/v1/`
 
+If port `8000` is already in use on your host, set `WEB_PORT` in `.env` to another free port, such as `8001`, and reopen the app on that host port.
+
 ## Smoke test
 
 Run the validation script:
