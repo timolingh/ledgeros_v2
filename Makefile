@@ -15,7 +15,7 @@ help:
 up:
 	docker compose -f docker-compose.yml up -d db
 	docker compose -f docker-compose.yml run --rm web python manage.py migrate
-	docker compose -f docker-compose.yml up web
+	docker compose -f docker-compose.yml up -d web
 
 down:
 	docker compose -f docker-compose.yml down --remove-orphans
