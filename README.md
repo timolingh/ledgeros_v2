@@ -97,6 +97,17 @@ docker compose run --rm web python manage.py makemigrations --check --dry-run
 docker compose run --rm web pytest
 ```
 
+## Make Targets
+
+Use these convenience targets for the common Docker lifecycle:
+
+```bash
+make down   # Bring the system down
+make reset  # Bring the system down and remove volumes
+make up     # Start db, run migrations, then bring web up
+make test   # Run tests
+```
+
 ## Documentation map
 
 Primary docs:
