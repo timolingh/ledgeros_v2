@@ -21,6 +21,7 @@ from apps.accounting.api.ingestion_serializers import (
     ApiCreditCreateSerializer,
     ApiInvoiceCreateSerializer,
     ApiPaymentCreateSerializer,
+    ApiSyncEventSerializer,
 )
 from apps.accounting.api.serializers import (
     AccountSerializer,
@@ -35,7 +36,14 @@ from apps.accounting.api.serializers import (
     TaxCodeSerializer,
 )
 from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, ReportView, TaxCode
-from apps.accounting.services.api_ingestion import submit_bill_event, submit_customer_event, submit_credit_event, submit_invoice_event, submit_payment_event
+from apps.accounting.services.api_ingestion import (
+    submit_bill_event,
+    submit_customer_event,
+    submit_credit_event,
+    submit_invoice_event,
+    submit_payment_event,
+    submit_sync_event,
+)
 from apps.accounting.services.reporting import (
     generate_balance_sheet,
     generate_profit_and_loss,
@@ -404,6 +412,13 @@ class PaymentSubmissionView(ApiSubmissionView):
     required_scope = "payments"
     event_type = "payment.post_requested"
     service_func = staticmethod(submit_payment_event)
+
+
+class SyncEventSubmissionView(ApiSubmissionView):
+    serializer_class = ApiSyncEventSerializer
+    required_scope = "sync_events"
+    event_type = "sync.event_received"
+    service_func = staticmethod(submit_sync_event)
 
 
 class CreditSubmissionView(ApiSubmissionView):

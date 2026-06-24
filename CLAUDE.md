@@ -2,6 +2,11 @@
 
 This system handles financial records. Treat accounting behavior as high-risk.
 
+Core tenet:
+- LedgerOS must present itself as a generic accounting backend, not as a vertical app for a downstream domain.
+- Do not add downstream-domain concepts as first-class LedgerOS features unless they are truly shared accounting primitives.
+- If a proposed change makes LedgerOS look domain-specific, stop and object before coding.
+
 Before coding:
 - State domain assumptions explicitly.
 - Identify whether the change affects ledger entries, reports, balances, payments, invoices, reconciliations, taxes, 

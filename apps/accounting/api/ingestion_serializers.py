@@ -128,3 +128,13 @@ class ApiCustomerUpsertSerializer(serializers.Serializer):
         attrs["default_ar_account"] = account
         attrs["default_ar_account_code"] = account.account_code
         return attrs
+
+
+class ApiSyncEventSerializer(serializers.Serializer):
+    source_system = serializers.CharField(max_length=128)
+    domain_event_type = serializers.CharField(max_length=128)
+    external_id = serializers.CharField(max_length=255)
+    source_object_type = serializers.CharField(max_length=128)
+    source_object_id = serializers.CharField(max_length=128)
+    occurred_at = serializers.DateTimeField()
+    payload = serializers.JSONField()

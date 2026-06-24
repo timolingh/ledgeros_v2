@@ -16,6 +16,7 @@ from apps.accounting.api.views import (
     RefundSubmissionView,
     HealthCheckView,
     TaxCodeViewSet,
+    SyncEventSubmissionView,
 )
 
 router = DefaultRouter()
@@ -33,6 +34,7 @@ urlpatterns = [
     path("invoices/", InvoiceSubmissionView.as_view(), name="api-invoice-submission"),
     path("bills/", BillSubmissionView.as_view(), name="api-bill-submission"),
     path("payments/", PaymentSubmissionView.as_view(), name="api-payment-submission"),
+    path("sync-events/", SyncEventSubmissionView.as_view(), name="api-sync-event-submission"),
     path("credits/", CreditSubmissionView.as_view(), name="api-credit-submission"),
     path("refunds/", RefundSubmissionView.as_view(), name="api-refund-submission"),
     path("", include(router.urls)),

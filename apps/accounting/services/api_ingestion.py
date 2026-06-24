@@ -12,7 +12,20 @@ import yaml
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
-from apps.accounting.models import ApiRequestRecord, Bill, BillLine, CreditMemo, Customer, Entity, Invoice, InvoiceLine, JournalEntry, Payment, Vendor
+from apps.accounting.models import (
+    ApiRequestRecord,
+    Bill,
+    BillLine,
+    CreditMemo,
+    Customer,
+    Entity,
+    Invoice,
+    InvoiceLine,
+    JournalEntry,
+    Payment,
+    SyncEventRecord,
+    Vendor,
+)
 from apps.accounting.services.ar_ap import apply_payment_to_bill, apply_payment_to_invoice, issue_customer_credit, issue_vendor_credit, post_bill, post_invoice
 from apps.accounting.services.audit import audit_success
 from apps.accounting.services.entities import get_default_entity
@@ -275,6 +288,22 @@ def _build_credit_payload(*, credit: CreditMemo, journal_entry: JournalEntry, cl
     }
 
 
+def _build_sync_event_payload(sync_event: SyncEventRecord, *, client_id: str) -> dict[str, Any]:
+    return {
+        "client_id": client_id,
+        "sync_event": {
+            "id": sync_event.id,
+            "source_system": sync_event.source_system,
+            "domain_event_type": sync_event.domain_event_type,
+            "external_id": sync_event.external_id,
+            "source_object_type": sync_event.source_object_type,
+            "source_object_id": sync_event.source_object_id,
+            "occurred_at": sync_event.occurred_at.isoformat(),
+            "status": sync_event.status,
+        },
+    }
+
+
 @transaction.atomic
 def submit_customer_event(*, client_id: str, idempotency_key: str, nonce: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     entity = get_default_entity()
@@ -517,6 +546,51 @@ def submit_payment_event(*, client_id: str, idempotency_key: str, nonce: str, pa
         entity=entity,
         client_id=client_id,
         event_type="payment.post_requested",
+        idempotency_key=idempotency_key,
+        nonce=nonce,
+        request_payload=payload,
+        create_response=create_response,
+    )
+
+
+@transaction.atomic
+def submit_sync_event(*, client_id: str, idempotency_key: str, nonce: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    entity = get_default_entity()
+
+    def create_response():
+        sync_event, created = SyncEventRecord.objects.get_or_create(
+            entity=entity,
+            source_system=payload["source_system"],
+            domain_event_type=payload["domain_event_type"],
+            external_id=payload["external_id"],
+            defaults={
+                "source_object_type": payload["source_object_type"],
+                "source_object_id": payload["source_object_id"],
+                "idempotency_key": idempotency_key,
+                "request_hash": hash_payload(payload),
+                "occurred_at": payload["occurred_at"],
+                "payload": json_safe_payload(payload["payload"]),
+            },
+        )
+        if not created:
+            incoming_hash = hash_payload(payload)
+            if (
+                sync_event.source_object_type != payload["source_object_type"]
+                or sync_event.source_object_id != payload["source_object_id"]
+                or sync_event.occurred_at != payload["occurred_at"]
+                or sync_event.request_hash != incoming_hash
+            ):
+                raise ValidationError({"external_id": "This external id already exists with different data."})
+
+        response_payload = _build_sync_event_payload(sync_event, client_id=client_id)
+        sync_event.response_payload = response_payload
+        sync_event.save(update_fields=["response_payload", "updated_at"])
+        return 201 if created else 200, response_payload, "SyncEventRecord", sync_event.id, None
+
+    return _submit_api_request(
+        entity=entity,
+        client_id=client_id,
+        event_type="sync.event_received",
         idempotency_key=idempotency_key,
         nonce=nonce,
         request_payload=payload,

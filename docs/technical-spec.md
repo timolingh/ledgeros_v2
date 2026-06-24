@@ -12,7 +12,7 @@ Implemented domains:
 - AR/AP: customers, vendors, invoices, bills, payments, payment applications, credits.
 - Banking and reconciliation: bank accounts, transactions, statement lines, reconciliations, matches.
 - Reporting and tax: saved report views, tax codes, balance sheet, profit and loss, drill-downs, period summary, tax summary.
-- External API ingestion: API client config, HMAC authentication, scopes, event types, idempotency records, response replay, customer/invoice/bill/payment/credit/refund submissions.
+- External API ingestion: API client config, HMAC authentication, scopes, event types, idempotency records, response replay, customer/invoice/bill/payment/credit/refund submissions, plus generic sync-event persistence for downstream integrations.
 
 ## 2. Project layout
 
@@ -233,6 +233,7 @@ Implemented route families include:
 /invoices/
 /bills/
 /payments/
+/sync-events/
 /credits/
 /refunds/
 ```
@@ -261,9 +262,17 @@ POST /api/v1/customers/ -> customer.upsert_requested
 POST /api/v1/invoices/  -> invoice.post_requested
 POST /api/v1/bills/     -> bill.post_requested
 POST /api/v1/payments/  -> payment.post_requested
+POST /api/v1/sync-events/ -> sync.event_received
 POST /api/v1/credits/   -> credit.post_requested
 POST /api/v1/refunds/   -> refund.post_requested
 ```
+
+Property-specific workflow boundary:
+
+- LedgerOS should remain generic and should not add property-management-specific write endpoints as first-class domain surfaces.
+- If a downstream app needs to persist property-oriented sync/audit events, prefer a generic sync-event resource rather than a dedicated security-deposit endpoint.
+- Property-specific meaning, such as security-deposit lifecycle rules, should remain in the downstream application that owns that domain.
+- If a proposed change would make LedgerOS look like a downstream vertical app, stop and challenge the change before implementation.
 
 Authentication:
 
@@ -416,6 +425,12 @@ Rationale: Different source systems may emit the same human invoice number. Clie
 Decision: API client config includes only fields the implementation uses.
 
 Rationale: Unused optional config creates false completeness and validation burden.
+
+### ADR-017: Keep property-specific workflow semantics out of LedgerOS
+
+Decision: LedgerOS should not grow domain-specific endpoints for downstream property-management concepts such as security deposits, and its public presentation should stay generic; if a downstream app needs a durable sync boundary, use a generic external-event or sync-event resource.
+
+Rationale: LedgerOS stays a slim accounting backend while downstream apps retain ownership of their domain rules and event vocabulary.
 
 ## 13. Deferred decisions and non-goals
 
