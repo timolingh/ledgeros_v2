@@ -11,7 +11,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
-from apps.accounting.models import ApiRequestRecord, Account, Bill, Customer, Entity, Invoice, Vendor
+from apps.accounting.models import ApiRequestRecord, Account, Bill, Customer, Entity, Invoice, SyncEventRecord, Vendor
 from apps.accounting.services import create_accounting_period
 from apps.accounting.services.chart_import import import_chart_of_accounts
 from apps.accounting.services.entities import get_default_entity
@@ -87,12 +87,14 @@ def api_ingestion_ready(tmp_path, monkeypatch):
       - invoices
       - bills
       - payments
+      - sync_events
       - credits
     allowed_event_types:
       - customer.upsert_requested
       - invoice.post_requested
       - bill.post_requested
       - payment.post_requested
+      - sync.event_received
       - credit.post_requested
       - refund.post_requested
   - client_id: api_invoice_only
@@ -307,6 +309,41 @@ def test_payment_submission_posts_and_reduces_balance(api_client, api_ingestion_
     assert payment_response.data["payment"]["amount"] == "75.00"
     assert invoice.status == Invoice.Status.PAID
     assert invoice.outstanding_balance() == Decimal("0.00")
+
+
+@pytest.mark.django_db
+def test_sync_event_submission_is_idempotent(api_client, api_ingestion_ready):
+    payload = {
+        "source_system": "propertyledger",
+        "domain_event_type": "security_deposit.received",
+        "external_id": "prop-1:secdep:1",
+        "source_object_type": "security_deposit_event",
+        "source_object_id": "1",
+        "occurred_at": "2026-05-17T12:00:00Z",
+        "payload": {
+            "property_id": 1,
+            "tenant_id": 2,
+            "amount": "500.00",
+            "description": "Security deposit received",
+        },
+    }
+    headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/sync-events/",
+        payload=payload,
+        idempotency_key="sync-event-001",
+    )
+
+    first = api_client.post("/api/v1/sync-events/", payload, format="json", **headers)
+    second = api_client.post("/api/v1/sync-events/", payload, format="json", **headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.data == second.data
+    assert first.data["sync_event"]["external_id"] == "prop-1:secdep:1"
+    assert SyncEventRecord.objects.filter(external_id="prop-1:secdep:1").count() == 1
+    assert ApiRequestRecord.objects.filter(client_id="api_full", event_type="sync.event_received").count() == 1
 
 
 @pytest.mark.django_db

@@ -156,7 +156,13 @@ External API ingestion should become easier to monitor:
 
 Secrets should remain outside the database/UI.
 
-### 3.4 Operational runbook
+### 3.4 Generic sync/event boundary
+
+If a downstream product needs LedgerOS to persist non-core workflow events, prefer one generic external-event or sync-event API over a family of domain-specific endpoints.
+
+Rationale: LedgerOS stays a slim accounting backend while downstream applications retain ownership of their business-domain semantics, such as property-specific security deposit logic.
+
+### 3.5 Operational runbook
 
 Add a production runbook:
 

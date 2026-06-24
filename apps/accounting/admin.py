@@ -6,7 +6,7 @@ from django.db import transaction
 from django.forms.models import BaseInlineFormSet
 from django.utils import timezone
 
-from apps.accounting.models import Account, AccountingPeriod, AuditLog, BankAccount, BankReconciliation, BankReconciliationMatch, BankStatementLine, BankTransaction, JournalEntry, JournalLine, ReportView, TaxCode
+from apps.accounting.models import Account, AccountingPeriod, AuditLog, BankAccount, BankReconciliation, BankReconciliationMatch, BankStatementLine, BankTransaction, JournalEntry, JournalLine, ReportView, SyncEventRecord, TaxCode
 from apps.accounting.selectors import account_balance
 from apps.accounting.services import change_period_status, post_journal_entry, reverse_journal_entry
 from apps.accounting.services.reporting import save_report_view, save_tax_code
@@ -174,6 +174,23 @@ class TaxCodeAdmin(admin.ModelAdmin):
             user=request.user,
             source="admin",
         )
+
+
+@admin.register(SyncEventRecord)
+class SyncEventRecordAdmin(admin.ModelAdmin):
+    list_display = ["source_system", "domain_event_type", "external_id", "source_object_type", "source_object_id", "status"]
+    list_filter = ["source_system", "domain_event_type", "status"]
+    search_fields = ["external_id", "source_object_type", "source_object_id"]
+    readonly_fields = ["entity", "source_system", "domain_event_type", "external_id", "source_object_type", "source_object_id", "idempotency_key", "request_hash", "occurred_at", "payload", "response_payload", "status", "last_error", "created_at", "updated_at"]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 class JournalLineInlineFormSet(BaseInlineFormSet):
