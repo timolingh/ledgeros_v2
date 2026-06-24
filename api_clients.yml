@@ -7,12 +7,14 @@ api_clients:
       - invoices
       - bills
       - payments
+      - sync_events
       - credits
     allowed_event_types:
       - customer.upsert_requested
       - invoice.post_requested
       - bill.post_requested
       - payment.post_requested
+      - sync.event_received
       - credit.post_requested
       - refund.post_requested
       
