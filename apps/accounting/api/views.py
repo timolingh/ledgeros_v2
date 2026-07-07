@@ -22,6 +22,7 @@ from apps.accounting.api.ingestion_serializers import (
     ApiInvoiceCreateSerializer,
     ApiPaymentCreateSerializer,
     ApiSyncEventSerializer,
+    ApiVendorUpsertSerializer,
 )
 from apps.accounting.api.serializers import (
     AccountSerializer,
@@ -43,6 +44,7 @@ from apps.accounting.services.api_ingestion import (
     submit_invoice_event,
     submit_payment_event,
     submit_sync_event,
+    submit_vendor_event,
 )
 from apps.accounting.services.reporting import (
     generate_balance_sheet,
@@ -135,6 +137,13 @@ class CustomerUpsertView(ApiSubmissionView):
     required_scope = "customers"
     event_type = "customer.upsert_requested"
     service_func = staticmethod(submit_customer_event)
+
+
+class VendorUpsertView(ApiSubmissionView):
+    serializer_class = ApiVendorUpsertSerializer
+    required_scope = "vendors"
+    event_type = "vendor.upsert_requested"
+    service_func = staticmethod(submit_vendor_event)
 
 
 class DefaultEntityScopedMixin:

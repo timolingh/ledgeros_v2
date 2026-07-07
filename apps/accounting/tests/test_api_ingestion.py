@@ -84,6 +84,7 @@ def api_ingestion_ready(tmp_path, monkeypatch):
     secret_env: LEDGEROS_API_CLIENT_FULL_SECRET
     scopes:
       - customers
+      - vendors
       - invoices
       - bills
       - payments
@@ -91,6 +92,7 @@ def api_ingestion_ready(tmp_path, monkeypatch):
       - credits
     allowed_event_types:
       - customer.upsert_requested
+      - vendor.upsert_requested
       - invoice.post_requested
       - bill.post_requested
       - payment.post_requested
@@ -193,6 +195,70 @@ def test_customer_submission_is_idempotent(api_client, api_ingestion_ready):
     assert first.data["customer"]["default_ar_account_code"] == "1100"
     assert Customer.objects.filter(customer_code="CUST-001").count() == 1
     assert ApiRequestRecord.objects.filter(client_id="api_full", event_type="customer.upsert_requested").count() == 1
+
+
+@pytest.mark.django_db
+def test_vendor_submission_is_idempotent(api_client, api_ingestion_ready):
+    payload = {
+        "vendor_code": "VEND-001",
+        "name": "Supplier One",
+        "default_ap_account_code": "2100",
+    }
+    headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/vendors/",
+        payload=payload,
+        idempotency_key="vendor-001",
+    )
+
+    first = api_client.post("/api/v1/vendors/", payload, format="json", **headers)
+    second = api_client.post("/api/v1/vendors/", payload, format="json", **headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.data == second.data
+    assert first.data["vendor"]["vendor_code"] == "VEND-001"
+    assert first.data["vendor"]["default_ap_account_code"] == "2100"
+    assert Vendor.objects.filter(vendor_code="VEND-001").count() == 1
+    assert ApiRequestRecord.objects.filter(client_id="api_full", event_type="vendor.upsert_requested").count() == 1
+
+
+@pytest.mark.django_db
+def test_vendor_upsert_updates_existing_vendor_by_code(api_client, api_ingestion_ready):
+    create_payload = {
+        "vendor_code": "VEND-UPDATE",
+        "name": "Original Supplier",
+        "default_ap_account_code": "2100",
+    }
+    create_headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/vendors/",
+        payload=create_payload,
+        idempotency_key="vendor-update-001",
+    )
+    create_response = api_client.post("/api/v1/vendors/", create_payload, format="json", **create_headers)
+    assert create_response.status_code == 201
+
+    update_payload = {
+        "vendor_code": "VEND-UPDATE",
+        "name": "Updated Supplier",
+    }
+    update_headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/vendors/",
+        payload=update_payload,
+        idempotency_key="vendor-update-002",
+    )
+    update_response = api_client.post("/api/v1/vendors/", update_payload, format="json", **update_headers)
+
+    assert update_response.status_code == 200
+    assert update_response.data["vendor"]["name"] == "Updated Supplier"
+    vendor = Vendor.objects.get(vendor_code="VEND-UPDATE")
+    assert vendor.name == "Updated Supplier"
+    assert vendor.default_ap_account.account_code == "2100"
 
 
 @pytest.mark.django_db

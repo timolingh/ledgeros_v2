@@ -12,7 +12,7 @@ Implemented domains:
 - AR/AP: customers, vendors, invoices, bills, payments, payment applications, credits.
 - Banking and reconciliation: bank accounts, transactions, statement lines, reconciliations, matches.
 - Reporting and tax: saved report views, tax codes, balance sheet, profit and loss, drill-downs, period summary, tax summary.
-- External API ingestion: API client config, HMAC authentication, scopes, event types, idempotency records, response replay, customer/invoice/bill/payment/credit/refund submissions, plus generic sync-event persistence for downstream integrations.
+- External API ingestion: API client config, HMAC authentication, scopes, event types, idempotency records, response replay, customer/vendor/invoice/bill/payment/credit/refund submissions, plus generic sync-event persistence for downstream integrations.
 
 ## 2. Project layout
 
@@ -184,6 +184,7 @@ Important services include:
 - `submit_bill_event`
 - `submit_payment_event`
 - `submit_credit_event`
+- `submit_vendor_event`
 
 Services are responsible for:
 
@@ -230,6 +231,7 @@ Implemented route families include:
 /tax-codes/
 /audit-logs/
 /customers/
+/vendors/
 /invoices/
 /bills/
 /payments/
@@ -259,6 +261,7 @@ Current write endpoints:
 
 ```text
 POST /api/v1/customers/ -> customer.upsert_requested
+POST /api/v1/vendors/   -> vendor.upsert_requested
 POST /api/v1/invoices/  -> invoice.post_requested
 POST /api/v1/bills/     -> bill.post_requested
 POST /api/v1/payments/  -> payment.post_requested

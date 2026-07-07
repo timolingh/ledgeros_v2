@@ -12,7 +12,7 @@ LedgerOS currently includes:
 - Accounts receivable and accounts payable workflows for customers, vendors, invoices, bills, payments, and credits.
 - Banking and reconciliation models/services for bank accounts, bank transactions, statement lines, reconciliation matches, and completed reconciliations.
 - Reporting and tax-code support for saved report views, balance sheet, profit and loss, period summary, tax summary, and drill-downs.
-- External API ingestion for customers, invoices, bills, generic sync events, credits, and refunds using configured API clients, HMAC authentication, scopes, event types, idempotency, and response replay.
+- External API ingestion for customers, vendors, invoices, bills, generic sync events, credits, and refunds using configured API clients, HMAC authentication, scopes, event types, idempotency, and response replay.
 - Docker Compose local runtime with Django and PostgreSQL.
 
 Development and verification are Docker-first:

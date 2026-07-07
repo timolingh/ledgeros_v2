@@ -18,6 +18,7 @@ from .api_ingestion import (
     submit_invoice_event,
     submit_payment_event,
     submit_sync_event,
+    submit_vendor_event,
 )
 from .banking import (
     complete_bank_reconciliation,
@@ -85,6 +86,7 @@ __all__ = [
     "submit_invoice_event",
     "submit_payment_event",
     "submit_sync_event",
+    "submit_vendor_event",
     "summarize_period",
     "tax_summary",
     "update_draft_journal_entry",

@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from apps.accounting.models import Account, Customer
+from apps.accounting.models import Account, Customer, Vendor
 from apps.accounting.services.entities import get_default_entity
 
 
@@ -127,6 +127,44 @@ class ApiCustomerUpsertSerializer(serializers.Serializer):
 
         attrs["default_ar_account"] = account
         attrs["default_ar_account_code"] = account.account_code
+        return attrs
+
+
+class ApiVendorUpsertSerializer(serializers.Serializer):
+    vendor_code = serializers.CharField(max_length=64)
+    name = serializers.CharField(max_length=255)
+    default_ap_account_code = serializers.CharField(
+        max_length=32,
+        required=False,
+        allow_blank=True,
+        default="",
+    )
+    status = serializers.ChoiceField(
+        choices=Vendor.Status.choices,
+        required=False,
+        default=Vendor.Status.ACTIVE,
+    )
+
+    def validate(self, attrs):
+        account_code = str(attrs.get("default_ap_account_code", "")).strip()
+        if not account_code:
+            return attrs
+
+        entity = get_default_entity()
+        try:
+            account = Account.objects.get(entity=entity, account_code=account_code)
+        except Account.DoesNotExist as exc:
+            raise serializers.ValidationError(
+                {"default_ap_account_code": "Unknown account code."}
+            ) from exc
+
+        if not account.is_active:
+            raise serializers.ValidationError(
+                {"default_ap_account_code": "Account must be active."}
+            )
+
+        attrs["default_ap_account"] = account
+        attrs["default_ap_account_code"] = account.account_code
         return attrs
 
 

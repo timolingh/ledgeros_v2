@@ -5,7 +5,7 @@ This manual is for technically competent users setting up and operating a minimu
 LedgerOS currently supports two client-interface patterns:
 
 1. A transitional human interface through Django Admin for setup, inspection, and early internal testing.
-2. A machine-facing API integration client for external systems submitting customers, invoices, bills, payments, credits, and refunds.
+2. A machine-facing API integration client for external systems submitting customers, vendors, invoices, bills, payments, credits, and refunds.
 
 For production bookkeeping by a non-technical bookkeeper, the recommended path is a dedicated bookkeeper-facing UI built on top of the backend. Requirements for that UI are included below so an agent can implement it safely.
 
@@ -431,6 +431,8 @@ POST /api/v1/bills/
 POST /api/v1/payments/
 POST /api/v1/credits/
 POST /api/v1/refunds/
+POST /api/v1/customers/
+POST /api/v1/vendors/
 ```
 
 These are resource-shaped endpoints with event-shaped behavior. Bank event ingestion is deferred from the MVP.
@@ -446,15 +448,19 @@ api_clients:
     secret_env: LEDGEROS_API_CLIENT_FULL_SECRET
     scopes:
       - customers
+      - vendors
       - invoices
       - bills
       - payments
+      - sync_events
       - credits
     allowed_event_types:
       - customer.upsert_requested
+      - vendor.upsert_requested
       - invoice.post_requested
       - bill.post_requested
       - payment.post_requested
+      - sync.event_received
       - credit.post_requested
       - refund.post_requested
 ```
@@ -536,7 +542,18 @@ Every write request needs an idempotency key.
 }
 ```
 
-### 6.6 Example payment payload
+### 6.6 Example vendor payload
+
+```json
+{
+  "vendor_code": "OFFICEDEPOT",
+  "name": "Office Depot",
+  "default_ap_account_code": "2100",
+  "status": "active"
+}
+```
+
+### 6.7 Example payment payload
 
 ```json
 {
@@ -558,7 +575,7 @@ For vendor payments, use:
 }
 ```
 
-### 6.7 Example credit/refund payload
+### 6.8 Example credit/refund payload
 
 ```json
 {
@@ -570,7 +587,7 @@ For vendor payments, use:
 }
 ```
 
-### 6.8 Real Python HMAC example
+### 6.9 Real Python HMAC example
 
 ```python
 import hashlib
@@ -644,12 +661,12 @@ if __name__ == "__main__":
     post_invoice()
 ```
 
-### 6.9 Agent prompt for building an API client
+### 6.10 Agent prompt for building an API client
 
 ```text
 Build a LedgerOS API integration client.
 
-The client must submit invoices, bills, payments, credits, and refunds to LedgerOS using the Epic 5 API.
+The client must submit customers, vendors, invoices, bills, payments, credits, and refunds to LedgerOS using the Epic 5 API.
 
 Requirements:
 - Read API credentials from environment variables or a secrets manager.
@@ -665,6 +682,7 @@ Requirements:
 
 Supported endpoints:
 - POST /api/v1/customers/
+- POST /api/v1/vendors/
 - POST /api/v1/invoices/
 - POST /api/v1/bills/
 - POST /api/v1/payments/
