@@ -4,6 +4,7 @@ api_clients:
     secret_env: LEDGEROS_API_CLIENT_FULL_SECRET
     scopes:
       - customers
+      - vendors
       - invoices
       - bills
       - payments
@@ -11,6 +12,7 @@ api_clients:
       - credits
     allowed_event_types:
       - customer.upsert_requested
+      - vendor.upsert_requested
       - invoice.post_requested
       - bill.post_requested
       - payment.post_requested

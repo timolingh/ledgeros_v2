@@ -22,6 +22,8 @@ This document captures the stable business contract for Epic 5 without forcing a
 
 The PRD and Epic 5 reference these write event families for the MVP contract:
 
+- customer upsert
+- vendor upsert
 - invoice posting
 - bill posting
 - customer payment posting

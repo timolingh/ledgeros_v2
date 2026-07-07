@@ -180,6 +180,24 @@ def _find_vendor(*, entity: Entity, vendor_code: str) -> Vendor:
         raise ValidationError({"vendor_code": "Unknown vendor."}) from exc
 
 
+def _build_vendor_payload(vendor: Vendor, *, client_id: str) -> dict[str, Any]:
+    return {
+        "client_id": client_id,
+        "vendor": {
+            "id": vendor.id,
+            "vendor_code": vendor.vendor_code,
+            "name": vendor.name,
+            "status": vendor.status,
+            "default_ap_account_code": (
+                vendor.default_ap_account.account_code if vendor.default_ap_account_id else ""
+            ),
+            "default_ap_account_name": (
+                vendor.default_ap_account.name if vendor.default_ap_account_id else ""
+            ),
+        },
+    }
+
+
 def _find_invoice_by_reference(*, entity: Entity, client_id: str, external_invoice_number: str) -> Invoice:
     try:
         return Invoice.objects.get(entity=entity, external_source_client_id=client_id, external_invoice_number=external_invoice_number)
@@ -352,6 +370,61 @@ def submit_customer_event(*, client_id: str, idempotency_key: str, nonce: str, p
         entity=entity,
         client_id=client_id,
         event_type="customer.upsert_requested",
+        idempotency_key=idempotency_key,
+        nonce=nonce,
+        request_payload=payload,
+        create_response=create_response,
+    )
+
+
+@transaction.atomic
+def submit_vendor_event(*, client_id: str, idempotency_key: str, nonce: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    entity = get_default_entity()
+    vendor_code = payload["vendor_code"]
+    vendor_defaults: dict[str, Any] = {
+        "name": payload["name"],
+        "status": payload.get("status", Vendor.Status.ACTIVE),
+    }
+    if payload.get("default_ap_account"):
+        vendor_defaults["default_ap_account"] = payload["default_ap_account"]
+
+    def create_response():
+        vendor, created = Vendor.objects.get_or_create(
+            entity=entity,
+            vendor_code=vendor_code,
+            defaults=vendor_defaults,
+        )
+        if not created:
+            vendor.name = payload["name"]
+            vendor.status = payload.get("status", vendor.status)
+            if payload.get("default_ap_account"):
+                vendor.default_ap_account = payload["default_ap_account"]
+            elif vendor.default_ap_account_id is None:
+                raise ValidationError(
+                    {
+                        "default_ap_account_code": (
+                            "A default AP account code is required when creating a vendor."
+                        )
+                    }
+                )
+            vendor.full_clean()
+            vendor.save()
+        elif vendor.default_ap_account_id is None:
+            raise ValidationError(
+                {
+                    "default_ap_account_code": (
+                        "A default AP account code is required when creating a vendor."
+                    )
+                }
+            )
+
+        response_payload = _build_vendor_payload(vendor, client_id=client_id)
+        return 201 if created else 200, response_payload, "Vendor", vendor.id, None
+
+    return _submit_api_request(
+        entity=entity,
+        client_id=client_id,
+        event_type="vendor.upsert_requested",
         idempotency_key=idempotency_key,
         nonce=nonce,
         request_payload=payload,
