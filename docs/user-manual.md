@@ -180,18 +180,18 @@ PY
 
 ### 3.6 Record a customer payment
 
-Customer payments currently use Undeposited Funds before bank deposit.
+Customer payments use the entity's cash/bank account. In the default chart, that is `1000 Cash`.
 
 ```bash
 docker compose run --rm -T web python manage.py shell <<'PY'
 from datetime import date
 from decimal import Decimal
 from apps.accounting.models import Invoice, Payment
-from apps.accounting.services import apply_payment_to_invoice, get_default_entity, get_or_create_undeposited_funds_account
+from apps.accounting.services import apply_payment_to_invoice, get_default_entity, get_or_create_cash_account
 
 entity = get_default_entity()
 invoice = Invoice.objects.get(entity=entity, invoice_number="INV-LOCAL-001")
-clearing = get_or_create_undeposited_funds_account(entity=entity)
+cash = get_or_create_cash_account(entity=entity)
 
 payment = Payment.objects.create(
     entity=entity,
@@ -199,7 +199,7 @@ payment = Payment.objects.create(
     source_id=invoice.id,
     amount=Decimal("1000.00"),
     payment_date=date(2026, 1, 20),
-    account=clearing,
+    account=cash,
 )
 application, journal_entry = apply_payment_to_invoice(
     payment=payment,
@@ -253,11 +253,11 @@ docker compose run --rm -T web python manage.py shell <<'PY'
 from datetime import date
 from decimal import Decimal
 from apps.accounting.models import Bill, Payment
-from apps.accounting.services import apply_payment_to_bill, get_default_entity, get_or_create_undeposited_funds_account
+from apps.accounting.services import apply_payment_to_bill, get_default_entity, get_or_create_cash_account
 
 entity = get_default_entity()
 bill = Bill.objects.get(entity=entity, bill_number="BILL-LOCAL-001")
-clearing = get_or_create_undeposited_funds_account(entity=entity)
+cash = get_or_create_cash_account(entity=entity)
 
 payment = Payment.objects.create(
     entity=entity,
@@ -265,7 +265,7 @@ payment = Payment.objects.create(
     source_id=bill.id,
     amount=Decimal("250.00"),
     payment_date=date(2026, 1, 25),
-    account=clearing,
+    account=cash,
 )
 application, journal_entry = apply_payment_to_bill(
     payment=payment,

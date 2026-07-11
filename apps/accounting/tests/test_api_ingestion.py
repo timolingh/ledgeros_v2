@@ -11,7 +11,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
-from apps.accounting.models import ApiRequestRecord, Account, Bill, Customer, Entity, Invoice, SyncEventRecord, Vendor
+from apps.accounting.models import ApiRequestRecord, Account, Bill, Customer, Entity, Invoice, Payment, SyncEventRecord, Vendor
 from apps.accounting.services import create_accounting_period
 from apps.accounting.services.chart_import import import_chart_of_accounts
 from apps.accounting.services.entities import get_default_entity
@@ -371,8 +371,12 @@ def test_payment_submission_posts_and_reduces_balance(api_client, api_ingestion_
     payment_response = api_client.post("/api/v1/payments/", payment_payload, format="json", **payment_headers)
 
     invoice = Invoice.objects.get(external_source_client_id="api_full", external_invoice_number="EXT-PAY-001")
+    payment = Payment.objects.get(source_type=Payment.SourceType.INVOICE, source_id=invoice.id)
     assert payment_response.status_code == 201
     assert payment_response.data["payment"]["amount"] == "75.00"
+    assert payment_response.data["journal_entry"]["status"] == "posted"
+    assert payment.account.account_code == "1000"
+    assert payment.account.name == "Cash"
     assert invoice.status == Invoice.Status.PAID
     assert invoice.outstanding_balance() == Decimal("0.00")
 
