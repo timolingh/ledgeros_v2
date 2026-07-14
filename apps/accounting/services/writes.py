@@ -10,6 +10,8 @@ from apps.accounting.services.entities import get_default_entity
 
 UNDEPOSITED_FUNDS_ACCOUNT_CODE = "1010"
 UNDEPOSITED_FUNDS_ACCOUNT_NAME = "Undeposited Funds"
+CASH_ACCOUNT_CODE = "1000"
+CASH_ACCOUNT_NAME = "Cash"
 
 
 @transaction.atomic
@@ -53,6 +55,33 @@ def get_or_create_undeposited_funds_account(*, entity: Entity | None = None) -> 
         entity=entity,
         account_code=UNDEPOSITED_FUNDS_ACCOUNT_CODE,
         name=UNDEPOSITED_FUNDS_ACCOUNT_NAME,
+        type=Account.AccountType.ASSET,
+        normal_balance=Account.NormalBalance.DEBIT,
+    )
+
+
+@transaction.atomic
+def get_or_create_cash_account(*, entity: Entity | None = None) -> Account:
+    """Return the default cash account used to fund payments."""
+    entity = entity or get_default_entity()
+    account = Account.objects.filter(entity=entity, account_code=CASH_ACCOUNT_CODE).first()
+    if account is not None:
+        expected_type = Account.AccountType.ASSET
+        expected_balance = Account.NormalBalance.DEBIT
+        if account.name != CASH_ACCOUNT_NAME or account.type != expected_type or account.normal_balance != expected_balance:
+            raise ValidationError(
+                {
+                    "account_code": (
+                        f"Account {CASH_ACCOUNT_CODE} is reserved for {CASH_ACCOUNT_NAME} and has conflicting settings."
+                    )
+                }
+            )
+        return account
+
+    return save_account(
+        entity=entity,
+        account_code=CASH_ACCOUNT_CODE,
+        name=CASH_ACCOUNT_NAME,
         type=Account.AccountType.ASSET,
         normal_balance=Account.NormalBalance.DEBIT,
     )

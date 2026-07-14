@@ -625,7 +625,7 @@ def submit_payment_event(*, client_id: str, idempotency_key: str, nonce: str, pa
                 source_id=invoice.id,
                 amount=amount,
                 payment_date=payload["payment_date"],
-                account=get_or_create_undeposited_funds_account(entity=entity),
+                account=get_or_create_cash_account(entity=entity),
             )
             application, journal_entry = apply_payment_to_invoice(payment=payment, invoice=invoice, applied_amount=amount, source="api")
         else:
@@ -638,7 +638,7 @@ def submit_payment_event(*, client_id: str, idempotency_key: str, nonce: str, pa
                 source_id=bill.id,
                 amount=amount,
                 payment_date=payload["payment_date"],
-                account=get_or_create_undeposited_funds_account(entity=entity),
+                account=get_or_create_cash_account(entity=entity),
             )
             application, journal_entry = apply_payment_to_bill(payment=payment, bill=bill, applied_amount=amount, source="api")
         response_payload = _build_payment_payload(payment=payment, application=application, journal_entry=journal_entry, client_id=client_id)

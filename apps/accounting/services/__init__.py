@@ -43,6 +43,7 @@ from .reporting import (
 from .posting import JournalLineInput, create_and_post_journal_entry, create_draft_journal_entry, post_journal_entry, update_draft_journal_entry
 from .reversal import reverse_journal_entry
 from .writes import save_account, save_accounting_period
+from .writes import get_or_create_cash_account
 from .writes import get_or_create_undeposited_funds_account
 
 __all__ = [
@@ -65,6 +66,7 @@ __all__ = [
     "generate_balance_sheet",
     "generate_profit_and_loss",
     "generate_report_drilldown",
+    "get_or_create_cash_account",
     "issue_customer_credit",
     "issue_vendor_credit",
     "match_bank_statement_line",

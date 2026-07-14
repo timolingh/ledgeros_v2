@@ -101,8 +101,8 @@ Accounting impact:
 
 - Invoice posting: debit AR, credit revenue.
 - Bill posting: debit expense/asset, credit AP.
-- Customer payment: debit Undeposited Funds, credit AR.
-- Vendor payment: debit AP, credit Undeposited Funds.
+- Customer payment: debit cash/bank, credit AR.
+- Vendor payment: debit AP, credit cash/bank.
 - Customer credit: reverse/reduce customer receivable/revenue according to service logic.
 - Vendor credit: reverse/reduce vendor payable/expense according to service logic.
 
@@ -381,11 +381,11 @@ Decision: Invoices, bills, payments, and credits are operational records that pr
 
 Rationale: Operational workflows and the general ledger must stay reconciled.
 
-### ADR-009: Undeposited Funds as MVP payment clearing
+### ADR-009: Payments post against cash/bank accounts
 
-Decision: Customer/vendor payments use an Undeposited Funds clearing account before bank movement.
+Decision: Customer/vendor payments post directly against a cash/bank account. The default chart's `1000` Cash account is the standard funding account used by API ingestion.
 
-Rationale: This separates payment application from bank deposit/withdrawal and keeps AR/AP workflows independent from reconciliation timing.
+Rationale: Payment application should reflect the source funding account in the ledger. Undeposited Funds remains available for deposit-clearing workflows, but it is not the default payment source.
 
 ### ADR-010: Banking API ingestion is deferred
 
