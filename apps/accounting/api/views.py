@@ -16,6 +16,7 @@ from rest_framework.views import APIView
 
 from apps.accounting.api.authentication import ApiClientAuthentication
 from apps.accounting.api.ingestion_serializers import (
+    ApiBankTransactionCreateSerializer,
     ApiBillCreateSerializer,
     ApiCustomerUpsertSerializer,
     ApiCreditCreateSerializer,
@@ -28,6 +29,8 @@ from apps.accounting.api.serializers import (
     AccountSerializer,
     AccountingPeriodSerializer,
     AuditLogSerializer,
+    BankAccountSerializer,
+    BankReconciliationSerializer,
     EntitySerializer,
     JournalEntrySerializer,
     JournalEntryWriteSerializer,
@@ -36,8 +39,10 @@ from apps.accounting.api.serializers import (
     ReportViewSerializer,
     TaxCodeSerializer,
 )
-from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, ReportView, TaxCode
+from apps.accounting.models import Account, AccountingPeriod, AuditLog, BankAccount, BankReconciliation, Entity, JournalEntry, ReportView, TaxCode
 from apps.accounting.services.api_ingestion import (
+    submit_bank_deposit_event,
+    submit_bank_withdrawal_event,
     submit_bill_event,
     submit_customer_event,
     submit_credit_event,
@@ -120,6 +125,21 @@ class ApiSubmissionView(APIView):
         return Response(response_payload, status=response_status_code)
 
 
+class ApiScopedReadOnlyMixin:
+    authentication_classes = [ApiClientAuthentication]
+    permission_classes = [IsAuthenticated]
+    required_scope = ""
+
+    def _authorize_client(self, request) -> None:
+        principal = request.user
+        if self.required_scope not in getattr(principal, "scopes", ()):
+            raise PermissionDenied("API client is not allowed to perform this action.")
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        self._authorize_client(request)
+
+
 class HealthCheckView(APIView):
     authentication_classes = []
     permission_classes = []
@@ -146,6 +166,20 @@ class VendorUpsertView(ApiSubmissionView):
     service_func = staticmethod(submit_vendor_event)
 
 
+class BankDepositView(ApiSubmissionView):
+    serializer_class = ApiBankTransactionCreateSerializer
+    required_scope = "banking"
+    event_type = "bank.deposit_requested"
+    service_func = staticmethod(submit_bank_deposit_event)
+
+
+class BankWithdrawalView(ApiSubmissionView):
+    serializer_class = ApiBankTransactionCreateSerializer
+    required_scope = "banking"
+    event_type = "bank.withdrawal_requested"
+    service_func = staticmethod(submit_bank_withdrawal_event)
+
+
 class DefaultEntityScopedMixin:
     def get_entity(self) -> Entity:
         return get_default_entity()
@@ -158,6 +192,26 @@ class UnsafeMethodLimitedMixin:
 
     def destroy(self, request, *args, **kwargs):
         raise MethodNotAllowed("DELETE")
+
+
+class BankAccountViewSet(ApiScopedReadOnlyMixin, viewsets.ReadOnlyModelViewSet):
+    serializer_class = BankAccountSerializer
+    required_scope = "banking"
+
+    def get_queryset(self):
+        return BankAccount.objects.select_related("ledger_account").filter(entity=get_default_entity()).order_by("name", "id")
+
+
+class BankReconciliationViewSet(ApiScopedReadOnlyMixin, viewsets.ReadOnlyModelViewSet):
+    serializer_class = BankReconciliationSerializer
+    required_scope = "banking"
+
+    def get_queryset(self):
+        return (
+            BankReconciliation.objects.select_related("bank_account", "bank_account__ledger_account")
+            .filter(entity=get_default_entity())
+            .order_by("-end_date", "-id")
+        )
 
 
 class EntityViewSet(viewsets.ReadOnlyModelViewSet):

@@ -8,6 +8,7 @@ api_clients:
       - invoices
       - bills
       - payments
+      - banking
       - sync_events
       - credits
     allowed_event_types:
@@ -16,6 +17,8 @@ api_clients:
       - invoice.post_requested
       - bill.post_requested
       - payment.post_requested
+      - bank.deposit_requested
+      - bank.withdrawal_requested
       - sync.event_received
       - credit.post_requested
       - refund.post_requested

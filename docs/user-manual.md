@@ -433,9 +433,13 @@ POST /api/v1/credits/
 POST /api/v1/refunds/
 POST /api/v1/customers/
 POST /api/v1/vendors/
+GET /api/v1/bank-accounts/
+GET /api/v1/bank-reconciliations/
+POST /api/v1/bank-deposits/
+POST /api/v1/bank-withdrawals/
 ```
 
-These are resource-shaped endpoints with event-shaped behavior. Bank event ingestion is deferred from the MVP.
+These are resource-shaped endpoints with event-shaped behavior. Bank-feed ingestion is deferred from the MVP, but controlled bank-account visibility and manual deposit/withdrawal posting are supported.
 
 ### 6.1 Configure API clients
 
@@ -452,6 +456,7 @@ api_clients:
       - invoices
       - bills
       - payments
+      - banking
       - sync_events
       - credits
     allowed_event_types:
@@ -460,6 +465,8 @@ api_clients:
       - invoice.post_requested
       - bill.post_requested
       - payment.post_requested
+      - bank.deposit_requested
+      - bank.withdrawal_requested
       - sync.event_received
       - credit.post_requested
       - refund.post_requested

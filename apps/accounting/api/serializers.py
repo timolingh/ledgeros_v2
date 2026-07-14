@@ -4,8 +4,20 @@ from datetime import date
 
 from rest_framework import serializers
 
-from apps.accounting.models import Account, AccountingPeriod, AuditLog, Entity, JournalEntry, JournalLine, ReportView, TaxCode
+from apps.accounting.models import (
+    Account,
+    AccountingPeriod,
+    AuditLog,
+    BankAccount,
+    BankReconciliation,
+    Entity,
+    JournalEntry,
+    JournalLine,
+    ReportView,
+    TaxCode,
+)
 from apps.accounting.selectors import account_balance
+from apps.accounting.selectors.banking import bank_account_balance
 from apps.accounting.services import JournalLineInput, post_journal_entry, reverse_journal_entry, update_draft_journal_entry
 from apps.accounting.services.entities import get_default_entity
 from apps.accounting.services.reporting import save_report_view, save_tax_code
@@ -143,6 +155,76 @@ class TaxCodeSerializer(serializers.ModelSerializer):
             liability_account=validated_data.get("liability_account", instance.liability_account),
             is_active=validated_data.get("is_active", instance.is_active),
         )
+
+
+class BankAccountSerializer(serializers.ModelSerializer):
+    current_balance = serializers.SerializerMethodField()
+    ledger_account_code = serializers.CharField(source="ledger_account.account_code", read_only=True)
+    ledger_account_name = serializers.CharField(source="ledger_account.name", read_only=True)
+
+    class Meta:
+        model = BankAccount
+        fields = [
+            "id",
+            "name",
+            "bank_name",
+            "account_number",
+            "status",
+            "ledger_account",
+            "ledger_account_code",
+            "ledger_account_name",
+            "current_balance",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_current_balance(self, obj: BankAccount) -> str:
+        return str(bank_account_balance(obj))
+
+
+class BankReconciliationSerializer(serializers.ModelSerializer):
+    bank_account_name = serializers.CharField(source="bank_account.name", read_only=True)
+    bank_account_ledger_account_code = serializers.CharField(source="bank_account.ledger_account.account_code", read_only=True)
+    bank_account_ledger_account_name = serializers.CharField(source="bank_account.ledger_account.name", read_only=True)
+    book_balance = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BankReconciliation
+        fields = [
+            "id",
+            "bank_account",
+            "bank_account_name",
+            "bank_account_ledger_account_code",
+            "bank_account_ledger_account_name",
+            "start_date",
+            "end_date",
+            "status",
+            "statement_ending_balance",
+            "cleared_balance",
+            "book_balance",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_book_balance(self, obj: BankReconciliation) -> str:
+        return str(bank_account_balance(obj.bank_account, as_of=obj.end_date))
+
+
+class BankTransactionSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    bank_account = serializers.IntegerField(read_only=True)
+    bank_account_name = serializers.CharField(read_only=True)
+    transaction_date = serializers.DateField(read_only=True)
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    transaction_type = serializers.CharField(read_only=True)
+    source_type = serializers.CharField(read_only=True)
+    source_id = serializers.IntegerField(read_only=True, allow_null=True)
+    memo = serializers.CharField(read_only=True)
+    journal_entry_id = serializers.IntegerField(read_only=True, allow_null=True)
+    journal_entry_status = serializers.CharField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
 
 
 class JournalLineSerializer(serializers.ModelSerializer):
