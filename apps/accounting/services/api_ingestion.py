@@ -32,7 +32,7 @@ from apps.accounting.services.ar_ap import apply_payment_to_bill, apply_payment_
 from apps.accounting.services.audit import audit_success
 from apps.accounting.services.entities import get_default_entity
 from apps.accounting.services.posting import JournalLineInput, create_and_post_journal_entry
-from apps.accounting.services.writes import get_or_create_undeposited_funds_account
+from apps.accounting.services.writes import get_or_create_cash_account
 
 
 @dataclass(frozen=True)

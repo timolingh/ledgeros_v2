@@ -11,7 +11,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
-from apps.accounting.models import ApiRequestRecord, Account, Bill, Customer, Entity, Invoice, JournalEntry, SyncEventRecord, Vendor
+from apps.accounting.models import ApiRequestRecord, Account, Bill, Customer, Entity, Invoice, JournalEntry, Payment, SyncEventRecord, Vendor
 from apps.accounting.services import create_accounting_period
 from apps.accounting.services.chart_import import import_chart_of_accounts
 from apps.accounting.services.entities import get_default_entity
