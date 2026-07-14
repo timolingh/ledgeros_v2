@@ -92,6 +92,14 @@ class ApiCreditCreateSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
 
 
+class ApiBankTransactionCreateSerializer(serializers.Serializer):
+    bank_account_id = serializers.IntegerField()
+    transaction_date = serializers.DateField()
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    offset_account_code = serializers.CharField(max_length=32)
+    memo = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
+
+
 class ApiCustomerUpsertSerializer(serializers.Serializer):
     customer_code = serializers.CharField(max_length=64)
     name = serializers.CharField(max_length=255)

@@ -11,10 +11,11 @@ import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
-from apps.accounting.models import ApiRequestRecord, Account, Bill, Customer, Entity, Invoice, JournalEntry, Payment, SyncEventRecord, Vendor
+from apps.accounting.models import ApiRequestRecord, Account, BankAccount, BankReconciliation, BankTransaction, Bill, Customer, Entity, Invoice, JournalEntry, Payment, SyncEventRecord, Vendor
 from apps.accounting.services import create_accounting_period
 from apps.accounting.services.chart_import import import_chart_of_accounts
 from apps.accounting.services.entities import get_default_entity
+from apps.accounting.services.banking import create_bank_reconciliation
 
 
 @pytest.fixture
@@ -88,6 +89,7 @@ def api_ingestion_ready(tmp_path, monkeypatch):
       - invoices
       - bills
       - payments
+      - banking
       - sync_events
       - credits
     allowed_event_types:
@@ -96,6 +98,8 @@ def api_ingestion_ready(tmp_path, monkeypatch):
       - invoice.post_requested
       - bill.post_requested
       - payment.post_requested
+      - bank.deposit_requested
+      - bank.withdrawal_requested
       - sync.event_received
       - credit.post_requested
       - refund.post_requested
@@ -122,20 +126,35 @@ def api_ingestion_ready(tmp_path, monkeypatch):
     }
 
 
-def _signed_headers(*, client_id: str, secret: str, path: str, payload: dict, idempotency_key: str, nonce: str | None = None) -> dict[str, str]:
-    nonce = nonce or f"nonce-{idempotency_key}"
-    body = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+def _signed_headers(
+    *,
+    client_id: str,
+    secret: str,
+    path: str,
+    payload: dict | None = None,
+    idempotency_key: str | None = None,
+    nonce: str | None = None,
+    method: str = "POST",
+) -> dict[str, str]:
+    nonce = nonce or (f"nonce-{idempotency_key}" if idempotency_key is not None else "nonce-read")
+    body = (
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        if payload is not None
+        else b""
+    )
     body_hash = hashlib.sha256(body).hexdigest()
     timestamp = str(int(time.time()))
-    message = "\n".join([client_id, "POST", path, timestamp, nonce, body_hash]).encode("utf-8")
+    message = "\n".join([client_id, method.upper(), path, timestamp, nonce, body_hash]).encode("utf-8")
     signature = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
-    return {
+    headers = {
         "HTTP_X_LEDGEROS_CLIENT_ID": client_id,
         "HTTP_X_LEDGEROS_TIMESTAMP": timestamp,
         "HTTP_X_LEDGEROS_NONCE": nonce,
         "HTTP_X_LEDGEROS_SIGNATURE": signature,
-        "HTTP_IDEMPOTENCY_KEY": idempotency_key,
     }
+    if idempotency_key is not None:
+        headers["HTTP_IDEMPOTENCY_KEY"] = idempotency_key
+    return headers
 
 
 @pytest.mark.django_db
@@ -379,6 +398,172 @@ def test_payment_submission_posts_and_reduces_balance(api_client, api_ingestion_
     assert payment.account.name == "Cash"
     assert invoice.status == Invoice.Status.PAID
     assert invoice.outstanding_balance() == Decimal("0.00")
+
+
+@pytest.mark.django_db
+def test_bank_account_listing_exposes_current_balance(api_client, api_ingestion_ready):
+    entity = api_ingestion_ready["entity"]
+    cash_account = Account.objects.get(entity=entity, account_code="1000")
+    bank_account = BankAccount.objects.create(
+        entity=entity,
+        name="Operating Checking",
+        account_number="1111",
+        bank_name="First Bank",
+        ledger_account=cash_account,
+    )
+
+    deposit_payload = {
+        "bank_account_id": bank_account.id,
+        "transaction_date": "2026-05-15",
+        "amount": "150.00",
+        "offset_account_code": "4000",
+        "memo": "Deposit",
+    }
+    deposit_headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/bank-deposits/",
+        payload=deposit_payload,
+        idempotency_key="bank-deposit-001",
+    )
+    deposit_response = api_client.post("/api/v1/bank-deposits/", deposit_payload, format="json", **deposit_headers)
+    assert deposit_response.status_code == 201
+
+    list_headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/bank-accounts/",
+        method="GET",
+    )
+    list_response = api_client.get("/api/v1/bank-accounts/", **list_headers)
+
+    assert list_response.status_code == 200
+    assert len(list_response.data) == 1
+    assert list_response.data[0]["name"] == "Operating Checking"
+    assert list_response.data[0]["ledger_account_code"] == "1000"
+    assert list_response.data[0]["current_balance"] == "150.00"
+
+
+@pytest.mark.django_db
+def test_bank_deposit_submission_posts_bank_transaction(api_client, api_ingestion_ready):
+    entity = api_ingestion_ready["entity"]
+    cash_account = Account.objects.get(entity=entity, account_code="1000")
+    bank_account = BankAccount.objects.create(
+        entity=entity,
+        name="Deposit Checking",
+        account_number="2222",
+        bank_name="Second Bank",
+        ledger_account=cash_account,
+    )
+
+    payload = {
+        "bank_account_id": bank_account.id,
+        "transaction_date": "2026-05-16",
+        "amount": "40.00",
+        "offset_account_code": "5000",
+        "memo": "Bank fee reimbursement",
+    }
+    headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/bank-deposits/",
+        payload=payload,
+        idempotency_key="bank-deposit-002",
+    )
+
+    first = api_client.post("/api/v1/bank-deposits/", payload, format="json", **headers)
+    second = api_client.post("/api/v1/bank-deposits/", payload, format="json", **headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.data == second.data
+    assert first.data["bank_transaction"]["transaction_type"] == BankTransaction.Type.DEPOSIT
+    assert first.data["journal_entry"]["status"] == JournalEntry.Status.POSTED
+    assert BankAccount.objects.get(pk=bank_account.pk).current_balance() == Decimal("40.00")
+    assert ApiRequestRecord.objects.filter(client_id="api_full", event_type="bank.deposit_requested").count() == 1
+
+
+@pytest.mark.django_db
+def test_bank_withdrawal_submission_posts_bank_transaction(api_client, api_ingestion_ready):
+    entity = api_ingestion_ready["entity"]
+    cash_account = Account.objects.get(entity=entity, account_code="1000")
+    bank_account = BankAccount.objects.create(
+        entity=entity,
+        name="Withdrawal Checking",
+        account_number="3333",
+        bank_name="Third Bank",
+        ledger_account=cash_account,
+    )
+
+    payload = {
+        "bank_account_id": bank_account.id,
+        "transaction_date": "2026-05-17",
+        "amount": "25.00",
+        "offset_account_code": "5000",
+        "memo": "ATM fee",
+    }
+    headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/bank-withdrawals/",
+        payload=payload,
+        idempotency_key="bank-withdrawal-001",
+    )
+
+    response = api_client.post("/api/v1/bank-withdrawals/", payload, format="json", **headers)
+
+    assert response.status_code == 201
+    assert response.data["bank_transaction"]["transaction_type"] == BankTransaction.Type.WITHDRAWAL
+    assert response.data["journal_entry"]["status"] == JournalEntry.Status.POSTED
+    assert BankAccount.objects.get(pk=bank_account.pk).current_balance() == Decimal("-25.00")
+    assert ApiRequestRecord.objects.filter(client_id="api_full", event_type="bank.withdrawal_requested").count() == 1
+
+
+@pytest.mark.django_db
+def test_bank_reconciliation_listing_exposes_status(api_client, api_ingestion_ready):
+    entity = api_ingestion_ready["entity"]
+    cash_account = Account.objects.get(entity=entity, account_code="1000")
+    bank_account = BankAccount.objects.create(
+        entity=entity,
+        name="Recon Checking",
+        account_number="4444",
+        bank_name="Fourth Bank",
+        ledger_account=cash_account,
+    )
+    deposit_payload = {
+        "bank_account_id": bank_account.id,
+        "transaction_date": "2026-05-18",
+        "amount": "60.00",
+        "offset_account_code": "4000",
+        "memo": "Deposit",
+    }
+    deposit_headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/bank-deposits/",
+        payload=deposit_payload,
+        idempotency_key="bank-deposit-003",
+    )
+    assert api_client.post("/api/v1/bank-deposits/", deposit_payload, format="json", **deposit_headers).status_code == 201
+
+    reconciliation = create_bank_reconciliation(
+        bank_account=bank_account,
+        start_date=date(2026, 5, 1),
+        end_date=date(2026, 5, 31),
+        statement_ending_balance=Decimal("60.00"),
+    )
+    list_headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/bank-reconciliations/",
+        method="GET",
+    )
+    list_response = api_client.get("/api/v1/bank-reconciliations/", **list_headers)
+
+    assert list_response.status_code == 200
+    assert list_response.data[0]["id"] == reconciliation.id
+    assert list_response.data[0]["status"] == BankReconciliation.Status.OPEN
+    assert list_response.data[0]["book_balance"] == "60.00"
 
 
 @pytest.mark.django_db

@@ -2,6 +2,10 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from apps.accounting.api.views import (
+    BankAccountViewSet,
+    BankDepositView,
+    BankReconciliationViewSet,
+    BankWithdrawalView,
     AccountViewSet,
     AccountingPeriodViewSet,
     AuditLogViewSet,
@@ -21,6 +25,8 @@ from apps.accounting.api.views import (
 )
 
 router = DefaultRouter()
+router.register("bank-accounts", BankAccountViewSet, basename="bank-account")
+router.register("bank-reconciliations", BankReconciliationViewSet, basename="bank-reconciliation")
 router.register("entities", EntityViewSet, basename="entity")
 router.register("accounts", AccountViewSet, basename="account")
 router.register("periods", AccountingPeriodViewSet, basename="period")
@@ -31,6 +37,8 @@ router.register("audit-logs", AuditLogViewSet, basename="audit-log")
 
 urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="api-health-check"),
+    path("bank-deposits/", BankDepositView.as_view(), name="api-bank-deposit"),
+    path("bank-withdrawals/", BankWithdrawalView.as_view(), name="api-bank-withdrawal"),
     path("customers/", CustomerUpsertView.as_view(), name="api-customer-upsert"),
     path("vendors/", VendorUpsertView.as_view(), name="api-vendor-upsert"),
     path("invoices/", InvoiceSubmissionView.as_view(), name="api-invoice-submission"),

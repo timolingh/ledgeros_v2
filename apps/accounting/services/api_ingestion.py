@@ -17,6 +17,8 @@ from apps.accounting.models import (
     Account,
     Bill,
     BillLine,
+    BankAccount,
+    BankTransaction,
     CreditMemo,
     Customer,
     Entity,
@@ -30,6 +32,7 @@ from apps.accounting.models import (
 )
 from apps.accounting.services.ar_ap import apply_payment_to_bill, apply_payment_to_invoice, issue_customer_credit, issue_vendor_credit, post_bill, post_invoice
 from apps.accounting.services.audit import audit_success
+from apps.accounting.services.banking import record_bank_transaction
 from apps.accounting.services.entities import get_default_entity
 from apps.accounting.services.posting import JournalLineInput, create_and_post_journal_entry
 from apps.accounting.services.writes import get_or_create_cash_account
@@ -197,6 +200,49 @@ def _build_vendor_payload(vendor: Vendor, *, client_id: str) -> dict[str, Any]:
             "default_ap_account_name": (
                 vendor.default_ap_account.name if vendor.default_ap_account_id else ""
             ),
+        },
+    }
+
+
+def _find_bank_account(*, entity: Entity, bank_account_id: int) -> BankAccount:
+    try:
+        bank_account = BankAccount.objects.select_related("ledger_account").get(entity=entity, pk=bank_account_id)
+    except BankAccount.DoesNotExist as exc:
+        raise ValidationError({"bank_account_id": "Unknown bank account."}) from exc
+    if bank_account.status != BankAccount.Status.ACTIVE:
+        raise ValidationError({"bank_account_id": "Bank account must be active."})
+    return bank_account
+
+
+def _find_active_account_by_code(*, entity: Entity, account_code: str, field_name: str) -> Account:
+    try:
+        account = Account.objects.get(entity=entity, account_code=account_code, is_active=True)
+    except Account.DoesNotExist as exc:
+        raise ValidationError({field_name: "Active account not found for code."}) from exc
+    return account
+
+
+def _build_bank_transaction_payload(bank_transaction: BankTransaction, *, client_id: str) -> dict[str, Any]:
+    journal_entry = bank_transaction.journal_entry
+    return {
+        "client_id": client_id,
+        "bank_transaction": {
+            "id": bank_transaction.id,
+            "bank_account": bank_transaction.bank_account_id,
+            "bank_account_name": bank_transaction.bank_account.name,
+            "transaction_date": str(bank_transaction.transaction_date),
+            "amount": str(bank_transaction.amount),
+            "transaction_type": bank_transaction.transaction_type,
+            "source_type": bank_transaction.source_type,
+            "source_id": bank_transaction.source_id,
+            "memo": bank_transaction.memo,
+            "journal_entry_id": journal_entry.id if journal_entry else None,
+            "journal_entry_status": journal_entry.status if journal_entry else "",
+            "created_at": bank_transaction.created_at.isoformat(),
+        },
+        "journal_entry": {
+            "id": journal_entry.id if journal_entry else None,
+            "status": journal_entry.status if journal_entry else "",
         },
     }
 
@@ -715,6 +761,75 @@ def submit_sync_event(*, client_id: str, idempotency_key: str, nonce: str, paylo
         nonce=nonce,
         request_payload=payload,
         create_response=create_response,
+    )
+
+
+@transaction.atomic
+def submit_bank_transaction_event(
+    *,
+    client_id: str,
+    idempotency_key: str,
+    nonce: str,
+    payload: dict[str, Any],
+    event_type: str,
+    transaction_type: str,
+) -> tuple[int, dict[str, Any]]:
+    entity = get_default_entity()
+    bank_account = _find_bank_account(entity=entity, bank_account_id=payload["bank_account_id"])
+    offset_account = _find_active_account_by_code(
+        entity=entity,
+        account_code=str(payload["offset_account_code"]).strip(),
+        field_name="offset_account_code",
+    )
+
+    def create_response():
+        bank_transaction = record_bank_transaction(
+            bank_account=bank_account,
+            transaction_date=payload["transaction_date"],
+            amount=Decimal(str(payload["amount"])),
+            transaction_type=transaction_type,
+            offset_account=offset_account,
+            memo=payload.get("memo", ""),
+            source_type=event_type,
+            source_id=None,
+            source="api",
+        )
+        response_payload = _build_bank_transaction_payload(bank_transaction, client_id=client_id)
+        journal_entry = bank_transaction.journal_entry
+        return 201, response_payload, "BankTransaction", bank_transaction.id, journal_entry.id if journal_entry else None
+
+    return _submit_api_request(
+        entity=entity,
+        client_id=client_id,
+        event_type=event_type,
+        idempotency_key=idempotency_key,
+        nonce=nonce,
+        request_payload=payload,
+        create_response=create_response,
+    )
+
+
+@transaction.atomic
+def submit_bank_deposit_event(*, client_id: str, idempotency_key: str, nonce: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    return submit_bank_transaction_event(
+        client_id=client_id,
+        idempotency_key=idempotency_key,
+        nonce=nonce,
+        payload=payload,
+        event_type="bank.deposit_requested",
+        transaction_type=BankTransaction.Type.DEPOSIT,
+    )
+
+
+@transaction.atomic
+def submit_bank_withdrawal_event(*, client_id: str, idempotency_key: str, nonce: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    return submit_bank_transaction_event(
+        client_id=client_id,
+        idempotency_key=idempotency_key,
+        nonce=nonce,
+        payload=payload,
+        event_type="bank.withdrawal_requested",
+        transaction_type=BankTransaction.Type.WITHDRAWAL,
     )
 
 

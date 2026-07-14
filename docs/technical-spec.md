@@ -225,6 +225,8 @@ Implemented route families include:
 ```text
 /entities/
 /accounts/
+/bank-accounts/
+/bank-reconciliations/
 /periods/
 /journal-entries/
 /reports/
@@ -235,6 +237,8 @@ Implemented route families include:
 /invoices/
 /bills/
 /payments/
+/bank-deposits/
+/bank-withdrawals/
 /sync-events/
 /credits/
 /refunds/
@@ -265,6 +269,8 @@ POST /api/v1/vendors/   -> vendor.upsert_requested
 POST /api/v1/invoices/  -> invoice.post_requested
 POST /api/v1/bills/     -> bill.post_requested
 POST /api/v1/payments/  -> payment.post_requested
+POST /api/v1/bank-deposits/ -> bank.deposit_requested
+POST /api/v1/bank-withdrawals/ -> bank.withdrawal_requested
 POST /api/v1/sync-events/ -> sync.event_received
 POST /api/v1/credits/   -> credit.post_requested
 POST /api/v1/refunds/   -> refund.post_requested
