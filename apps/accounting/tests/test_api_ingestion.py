@@ -11,7 +11,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
-from apps.accounting.models import ApiRequestRecord, Account, Bill, Customer, Entity, Invoice, Payment, SyncEventRecord, Vendor
+from apps.accounting.models import ApiRequestRecord, Account, Bill, Customer, Entity, Invoice, JournalEntry, SyncEventRecord, Vendor
 from apps.accounting.services import create_accounting_period
 from apps.accounting.services.chart_import import import_chart_of_accounts
 from apps.accounting.services.entities import get_default_entity
@@ -414,6 +414,45 @@ def test_sync_event_submission_is_idempotent(api_client, api_ingestion_ready):
     assert first.data["sync_event"]["external_id"] == "prop-1:secdep:1"
     assert SyncEventRecord.objects.filter(external_id="prop-1:secdep:1").count() == 1
     assert ApiRequestRecord.objects.filter(client_id="api_full", event_type="sync.event_received").count() == 1
+
+
+@pytest.mark.django_db
+def test_sync_event_submission_posts_balanced_journal_entry(api_client, api_ingestion_ready):
+    payload = {
+        "source_system": "propertyledger",
+        "domain_event_type": "vendor_payment.credit_card",
+        "external_id": "prop-1:vendpay:1",
+        "source_object_type": "vendor_payment",
+        "source_object_id": "1",
+        "occurred_at": "2026-05-17T12:00:00Z",
+        "payload": {
+            "accounting_entries": [
+                {"account_code": "2100", "direction": "debit", "amount": "125.00"},
+                {"account_code": "1000", "direction": "credit", "amount": "125.00"},
+            ],
+        },
+    }
+    headers = _signed_headers(
+        client_id="api_full",
+        secret=api_ingestion_ready["clients"]["api_full"],
+        path="/api/v1/sync-events/",
+        payload=payload,
+        idempotency_key="sync-event-002",
+    )
+
+    first = api_client.post("/api/v1/sync-events/", payload, format="json", **headers)
+    second = api_client.post("/api/v1/sync-events/", payload, format="json", **headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.data == second.data
+    assert first.data["journal_entry"]["status"] == JournalEntry.Status.POSTED
+    assert JournalEntry.objects.filter(source="api", description="vendor_payment.credit_card").count() == 1
+    journal_entry = JournalEntry.objects.get(source="api", description="vendor_payment.credit_card")
+    assert list(journal_entry.lines.values_list("account__account_code", "side", "amount")) == [
+        ("2100", "debit", Decimal("125.00")),
+        ("1000", "credit", Decimal("125.00")),
+    ]
 
 
 @pytest.mark.django_db

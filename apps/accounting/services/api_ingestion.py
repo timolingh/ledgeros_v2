@@ -14,6 +14,7 @@ from django.db import IntegrityError, transaction
 
 from apps.accounting.models import (
     ApiRequestRecord,
+    Account,
     Bill,
     BillLine,
     CreditMemo,
@@ -22,6 +23,7 @@ from apps.accounting.models import (
     Invoice,
     InvoiceLine,
     JournalEntry,
+    JournalLine,
     Payment,
     SyncEventRecord,
     Vendor,
@@ -29,7 +31,8 @@ from apps.accounting.models import (
 from apps.accounting.services.ar_ap import apply_payment_to_bill, apply_payment_to_invoice, issue_customer_credit, issue_vendor_credit, post_bill, post_invoice
 from apps.accounting.services.audit import audit_success
 from apps.accounting.services.entities import get_default_entity
-from apps.accounting.services.writes import get_or_create_cash_account
+from apps.accounting.services.posting import JournalLineInput, create_and_post_journal_entry
+from apps.accounting.services.writes import get_or_create_undeposited_funds_account
 
 
 @dataclass(frozen=True)
@@ -320,6 +323,32 @@ def _build_sync_event_payload(sync_event: SyncEventRecord, *, client_id: str) ->
             "status": sync_event.status,
         },
     }
+
+
+def _resolve_sync_event_journal_lines(*, entity: Entity, accounting_entries: list[dict[str, Any]]) -> list[JournalLineInput]:
+    resolved: list[JournalLineInput] = []
+    for index, entry in enumerate(accounting_entries, start=1):
+        if not isinstance(entry, dict):
+            raise ValidationError({f"accounting_entries[{index}]": "Each accounting entry must be an object."})
+        account_code = str(entry.get("account_code", "")).strip()
+        if not account_code:
+            raise ValidationError({f"accounting_entries[{index}].account_code": "This field is required."})
+        side = str(entry.get("direction", "")).strip().lower()
+        if side not in JournalLine.Side.values:
+            raise ValidationError({f"accounting_entries[{index}].direction": "Enter debit or credit."})
+        try:
+            account = Account.objects.get(entity=entity, account_code=account_code, is_active=True)
+        except Account.DoesNotExist as exc:
+            raise ValidationError({f"accounting_entries[{index}].account_code": "Active account not found for code."}) from exc
+        resolved.append(
+            JournalLineInput(
+                account_code=account.account_code,
+                side=side,
+                amount=Decimal(str(entry.get("amount"))),
+                description=str(entry.get("line_description", "")),
+            )
+        )
+    return resolved
 
 
 @transaction.atomic
@@ -629,6 +658,8 @@ def submit_payment_event(*, client_id: str, idempotency_key: str, nonce: str, pa
 @transaction.atomic
 def submit_sync_event(*, client_id: str, idempotency_key: str, nonce: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     entity = get_default_entity()
+    payload_body = payload.get("payload")
+    accounting_entries = payload_body.get("accounting_entries") if isinstance(payload_body, dict) else None
 
     def create_response():
         sync_event, created = SyncEventRecord.objects.get_or_create(
@@ -656,9 +687,25 @@ def submit_sync_event(*, client_id: str, idempotency_key: str, nonce: str, paylo
                 raise ValidationError({"external_id": "This external id already exists with different data."})
 
         response_payload = _build_sync_event_payload(sync_event, client_id=client_id)
+        if isinstance(accounting_entries, list) and accounting_entries:
+            journal_lines = _resolve_sync_event_journal_lines(entity=entity, accounting_entries=accounting_entries)
+            if len(journal_lines) < 2:
+                raise ValidationError({"accounting_entries": "At least two accounting entries are required."})
+            journal_entry = create_and_post_journal_entry(
+                entry_date=payload["occurred_at"].date(),
+                description=payload["domain_event_type"],
+                lines=journal_lines,
+                source="api",
+            )
+            sync_event.status = SyncEventRecord.Status.PROCESSED
+            response_payload["journal_entry"] = {
+                "id": journal_entry.id,
+                "status": journal_entry.status,
+            }
+            sync_event.save(update_fields=["status", "updated_at"])
         sync_event.response_payload = response_payload
         sync_event.save(update_fields=["response_payload", "updated_at"])
-        return 201 if created else 200, response_payload, "SyncEventRecord", sync_event.id, None
+        return 201 if created else 200, response_payload, "SyncEventRecord", sync_event.id, response_payload.get("journal_entry", {}).get("id")
 
     return _submit_api_request(
         entity=entity,
