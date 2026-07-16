@@ -295,6 +295,24 @@ Potential scope:
 - Signing outbound events.
 - Webhook logs.
 
+### 4.12 Epic 9 decision record
+
+This is a documentation-backed scope lock, not a new product surface.
+See `docs/epic-09.md` for the full decision record.
+
+Confirmed decisions:
+
+- Single role.
+- Existing Django auth/admin flow.
+- Audit history through Django, including failed attempts.
+- Import/export stays docs-only for now.
+
+Roadmap impact:
+
+- Keep permission work inside the existing Django admin/auth surface.
+- Preserve audit coverage for successful actions and selected failures.
+- Document import/export workflows instead of launching a dedicated import/export UI.
+
 ## 5. Explicit non-goals for now
 
 Do not implement these unless specifically requested:
@@ -325,6 +343,8 @@ Primary goal: turn banking/reconciliation into a practical daily workflow.
 ### Epic 9: Tax automation
 
 Primary goal: move from tax mapping/reporting support to actual tax calculation and liability posting.
+
+The Epic 9 decision record in section 4.12 is a separate documentation-backed scope lock for permissions, audit, and docs-only import/export.
 
 ### Epic 10: Property/tenant/owner workflows
 
