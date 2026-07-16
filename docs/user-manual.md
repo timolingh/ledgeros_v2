@@ -295,6 +295,8 @@ Django Admin is acceptable for:
 - debugging accounting flows,
 - reviewing audit logs.
 
+Audit logs also capture failed Django login attempts, so auth troubleshooting can stay inside the same audit trail.
+
 Django Admin is not the recommended long-term interface for non-technical bookkeeping. A bookkeeper-facing UI should be built for normal production entry.
 
 Admin safety rules:

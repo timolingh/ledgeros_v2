@@ -30,6 +30,7 @@ Capture the agreed scope for the next work package so implementation stays align
 - Audit trail model: `apps/accounting/models/audit.py`
 - Successful action audit helper: `apps/accounting/services/audit.py`
 - Failed API authentication audit events: `apps/accounting/api/authentication.py`
+- Failed Django login audit hook: `apps/accounting/signals.py`
 
 ## Deferred
 

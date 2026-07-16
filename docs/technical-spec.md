@@ -305,6 +305,7 @@ Admin must not become the place where accounting invariants are bypassed. Admin 
 ## 10. Audit logging
 
 Audit logs record successful material actions and selected authentication failures.
+Failed Django login attempts are captured through the existing audit trail.
 
 Audit logs must not store secrets, raw authorization headers, HMAC signatures, or reusable replay material.
 
