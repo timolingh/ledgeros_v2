@@ -469,6 +469,17 @@ class BillSubmissionView(ApiSubmissionView):
     event_type = "bill.post_requested"
     service_func = staticmethod(submit_bill_event)
 
+    def get(self, request):
+        if "bills" not in getattr(request.user, "scopes", ()):
+            raise PermissionDenied("API client is not allowed to read bills.")
+        references = request.query_params.getlist("external_bill_number")
+        if not references or len(references) > 100 or any(not ref.strip() or len(ref) > 255 for ref in references):
+            raise DRFValidationError({"external_bill_number": "Supply between 1 and 100 bill references."})
+        from apps.accounting.selectors.bill_status import bill_payment_statuses
+        return Response({"results": bill_payment_statuses(
+            entity=get_default_entity(), client_id=request.user.client_id, references=references,
+        )})
+
 
 class PaymentSubmissionView(ApiSubmissionView):
     serializer_class = ApiPaymentCreateSerializer

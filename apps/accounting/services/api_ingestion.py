@@ -676,17 +676,42 @@ def submit_payment_event(*, client_id: str, idempotency_key: str, nonce: str, pa
             application, journal_entry = apply_payment_to_invoice(payment=payment, invoice=invoice, applied_amount=amount, source="api")
         else:
             bill = _find_bill_by_reference(entity=entity, client_id=client_id, external_bill_number=source_reference)
-            if amount > bill.outstanding_balance():
-                raise ValidationError({"amount": "Payment amount cannot exceed the bill outstanding balance."})
+            bill = Bill.objects.select_for_update().get(pk=bill.pk)
+            if amount <= 0 or amount > bill.outstanding_balance():
+                raise ValidationError({"amount": "Payment must be positive and cannot exceed the bill outstanding balance."})
+            account_code = payload.get("funding_account_code")
+            if account_code:
+                try:
+                    funding = Account.objects.get(entity=entity, account_code=account_code, is_active=True, type__in=["asset", "liability"])
+                except Account.DoesNotExist as exc:
+                    raise ValidationError({"funding_account_code": "Choose an active asset or liability funding account."}) from exc
+                if funding.pk == bill.vendor.default_ap_account_id:
+                    raise ValidationError({"funding_account_code": "Funding account cannot be the bill AP account."})
+            else:
+                funding = get_or_create_cash_account(entity=entity)
+            existing_entry = None
+            if payload.get("existing_sync_event_id"):
+                event_id = payload["existing_sync_event_id"]
+                try:
+                    event = SyncEventRecord.objects.select_for_update().get(pk=event_id, entity=entity)
+                    # Only journals from this authenticated client's generic events
+                    # can be linked. Arbitrary journal IDs are never accepted.
+                    journal_ids = list(ApiRequestRecord.objects.filter(
+                        entity=entity, client_id=client_id, domain_object_type="SyncEventRecord",
+                        domain_object_id=str(event.pk), response_status_code__in=[200, 201],
+                    ).exclude(journal_entry_id="").values_list("journal_entry_id", flat=True).distinct())
+                    if len(journal_ids) != 1:
+                        raise ValidationError({"existing_sync_event_id": "Expected exactly one posted journal owned by this client; reconcile the event manually."})
+                    existing_entry = JournalEntry.objects.get(pk=journal_ids[0], entity=entity)
+                except (SyncEventRecord.DoesNotExist, ApiRequestRecord.DoesNotExist, JournalEntry.DoesNotExist, ValueError) as exc:
+                    raise ValidationError({"existing_sync_event_id": "No posted journal event owned by this client was found."}) from exc
             payment = Payment.objects.create(
-                entity=entity,
-                source_type=Payment.SourceType.BILL,
-                source_id=bill.id,
-                amount=amount,
-                payment_date=payload["payment_date"],
-                account=get_or_create_cash_account(entity=entity),
+                entity=entity, source_type=Payment.SourceType.BILL, source_id=bill.id,
+                amount=amount, payment_date=existing_entry.date if existing_entry else payload["payment_date"], account=funding,
             )
-            application, journal_entry = apply_payment_to_bill(payment=payment, bill=bill, applied_amount=amount, source="api")
+            application, journal_entry = apply_payment_to_bill(
+                payment=payment, bill=bill, applied_amount=amount, source="api", existing_entry=existing_entry,
+            )
         response_payload = _build_payment_payload(payment=payment, application=application, journal_entry=journal_entry, client_id=client_id)
         return 201, response_payload, "Payment", payment.id, journal_entry.id
 

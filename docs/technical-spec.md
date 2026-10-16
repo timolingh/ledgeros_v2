@@ -470,3 +470,65 @@ Future work must respect:
 - `docs/api-client-config-schema.md`
 - `docs/epic-implementation-guardrails.md`
 - `docs/ai-agent-guidance.md`
+
+
+## Bill settlement visibility and card funding (PropertyLedger Issue 20)
+
+`GET /api/v1/bills/?external_bill_number=REF` accepts 1–100 repeated bill
+references. It requires authenticated `bills` scope and returns only bills
+created by that integration client in the default entity. POST submission is
+unchanged. HMAC reads use the route path without its query string, matching the
+existing authentication contract. Batch references are filters, not authority
+to read another client's bills.
+
+The response `results` contain `id`, `external_bill_number`, document `status`,
+`payment_status`, `total_amount`, `amount_paid`, `amount_credited`, and
+`outstanding_balance` as decimal strings. This is a current, accrual-subledger
+settlement view: payment applications reduce the payable; credit adjustments
+are shown separately from money paid. Status is unpaid, partially_paid, paid,
+not_posted, voided, or needs_review. Linked reversed journals and negative
+balances require review. It is not a period P&L or owner statement, and GET does
+not write accounting state. Unallocated general journals cannot be assigned
+to bills automatically. Drill-down remains through the existing bill,
+payment/application, journal, and audit records.
+
+Bill `POST /api/v1/payments/` now optionally accepts `funding_account_code`:
+an active asset or liability account, distinct from the vendor AP account.
+Default funding remains Cash. A liability-funded bill payment posts debit AP /
+credit liability, creates the payment application, and settles the bill. Invoice
+funding behavior is unchanged. Closed/locked period rules still apply to new
+postings. Idempotency uses the existing `payment.post_requested` contract.
+
+For explicit historical reconciliation, the bill payment request may include
+`existing_sync_event_id`. LedgerOS verifies ownership using the original API
+request and requires exactly one original journal, posted and unreversed, with
+exactly the expected AP debit, funding credit, and amount. It links that journal
+without posting again or changing its date. The payment uses the original
+journal date. A unique nullable `PaymentApplication.journal_entry` link prevents
+a journal from being applied twice. Historical applications remain intact;
+applications created before this migration may have no direct journal link.
+Do not infer reversal status for those old unlinked records from this field.
+Legacy events without verifiable journals require manual reconciliation, not
+replacement postings. This endpoint does not allocate arbitrary manual journals.
+
+| Requirement | Source | Status | Code | Verification |
+| --- | --- | --- | --- | --- |
+| Scoped batch bill balances and credits | Issue 20 | Implemented | `selectors/bill_status.py`, `api/views.py` | API tests for balances, GET immutability and scope |
+| Card settlement changes AP and liability, not cash | Issue 20 | Implemented | `services/api_ingestion.py`, `services/ar_ap.py` | Card payment GL and retry tests |
+| Legacy journal linking without reposting | Issue 20 | Implemented | `apply_payment_to_bill`, migration 0011 | Legacy linking, ownership, mismatch, reversal and duplicate tests |
+| Automatic attribution of unallocated journals | Recommendation boundary | Deferred | None | Requires explicit allocation workflow |
+
+Deploy the LedgerOS migration before enabling updated downstream clients:
+
+```bash
+docker compose run --rm web python manage.py migrate
+docker compose run --rm web python manage.py check
+docker compose run --rm web python manage.py makemigrations --check --dry-run
+docker compose run --rm web pytest apps/accounting/tests/test_api_ingestion.py apps/accounting/tests/test_ar_ap_services.py
+```
+
+The named tests are also a deterministic sandbox acceptance check: a 100.00
+bill settled by card leaves AP at zero, raises card liability by 100.00, leaves
+Cash unchanged, and produces one application and one settlement journal across
+retries. A 40.00 payment plus 10.00 vendor credit leaves 50.00 outstanding.
+Legacy reconciliation must leave journal count and GL balances unchanged.
