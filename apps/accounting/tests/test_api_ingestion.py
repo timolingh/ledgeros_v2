@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -734,3 +734,152 @@ def test_client_scope_is_enforced(api_client, api_ingestion_ready):
     )
 
     assert response.status_code == 403
+
+
+@pytest.fixture
+def settlement_bill(api_client, api_ingestion_ready):
+    payload = {"vendor_code": "API-VEND-001", "external_bill_number": "BILL-SETTLE",
+               "bill_date": "2026-05-01", "due_date": "2026-05-31", "total_amount": "100.00",
+               "lines": [{"account_code": "5000", "amount": "100.00"}]}
+    response = api_client.post("/api/v1/bills/", payload, format="json", **_signed_headers(
+        client_id="api_full", secret="full-secret", path="/api/v1/bills/", payload=payload, idempotency_key="settlement-bill"))
+    assert response.status_code == 201
+    return Bill.objects.get(external_bill_number="BILL-SETTLE")
+
+
+@pytest.mark.django_db
+def test_bill_status_read_includes_external_payment_and_credit(api_client, api_ingestion_ready, settlement_bill):
+    from apps.accounting.services.api_ingestion import submit_payment_event, submit_credit_event
+    submit_payment_event(client_id="api_full", idempotency_key="external-payment", nonce="ext-pay", payload={
+        "source_type": "bill", "source_reference": "BILL-SETTLE", "payment_date": date(2026, 5, 2), "amount": Decimal("40.00")})
+    submit_credit_event(client_id="api_full", idempotency_key="external-credit", nonce="ext-credit", payload={
+        "source_type": "bill", "source_reference": "BILL-SETTLE", "credit_date": date(2026, 5, 3), "amount": Decimal("10.00"), "reason": "Return"})
+    before = JournalEntry.objects.count()
+    response = api_client.get("/api/v1/bills/", {"external_bill_number": "BILL-SETTLE"}, **_signed_headers(
+        client_id="api_full", secret="full-secret", path="/api/v1/bills/", method="GET"))
+    assert response.status_code == 200
+    row = response.data["results"][0]
+    assert row["payment_status"] == "partially_paid"
+    assert row["amount_paid"] == "40.00"
+    assert row["amount_credited"] == "10.00"
+    assert row["outstanding_balance"] == "50.00"
+    assert JournalEntry.objects.count() == before
+
+
+@pytest.mark.django_db
+def test_bill_read_requires_scope_and_hides_other_client_bills(api_client, api_ingestion_ready, settlement_bill):
+    response = api_client.get("/api/v1/bills/", {"external_bill_number": "BILL-SETTLE"}, **_signed_headers(
+        client_id="api_invoice_only", secret="invoice-secret", path="/api/v1/bills/", method="GET"))
+    assert response.status_code == 403
+    settlement_bill.external_source_client_id = "different-client"
+    settlement_bill.save()
+    response = api_client.get("/api/v1/bills/", {"external_bill_number": "BILL-SETTLE"}, **_signed_headers(
+        client_id="api_full", secret="full-secret", path="/api/v1/bills/", method="GET"))
+    assert response.status_code == 200
+    assert response.data["results"] == []
+
+
+@pytest.mark.django_db
+def test_card_bill_payment_posts_and_retries_without_duplicate(api_ingestion_ready, settlement_bill):
+    from apps.accounting.services.api_ingestion import submit_payment_event
+    card = Account.objects.create(entity=settlement_bill.entity, account_code="2200", name="Card", type="liability", normal_balance="credit")
+    payload = {"source_type": "bill", "source_reference": "BILL-SETTLE", "payment_date": date(2026, 5, 2),
+               "amount": Decimal("100.00"), "funding_account_code": "2200"}
+    _, result = submit_payment_event(client_id="api_full", idempotency_key="card-payment", nonce="card-1", payload=payload)
+    before = JournalEntry.objects.count()
+    _, replay = submit_payment_event(client_id="api_full", idempotency_key="card-payment", nonce="card-2", payload=payload)
+    settlement_bill.refresh_from_db()
+    assert replay == result
+    assert settlement_bill.outstanding_balance() == Decimal("0.00")
+    assert settlement_bill.status == Bill.Status.PAID
+    assert JournalEntry.objects.count() == before
+    entry = JournalEntry.objects.get(pk=result["journal_entry"]["id"])
+    assert entry.lines.get(side="credit").account_id == card.pk
+    assert entry.lines.get(side="debit").account_id == settlement_bill.vendor.default_ap_account_id
+    assert settlement_bill.payment_applications.get().journal_entry_id == entry.pk
+    from apps.accounting.selectors import account_balance
+    assert account_balance(card) == Decimal("100.00")
+    assert account_balance(settlement_bill.vendor.default_ap_account) == Decimal("0.00")
+    assert account_balance(Account.objects.get(entity=settlement_bill.entity, account_code="1000")) == Decimal("0.00")
+
+
+@pytest.mark.django_db
+def test_existing_card_event_links_once_without_reposting(api_ingestion_ready, settlement_bill):
+    from django.core.exceptions import ValidationError
+    from apps.accounting.services.api_ingestion import submit_sync_event, submit_payment_event
+    Account.objects.create(entity=settlement_bill.entity, account_code="2200", name="Card", type="liability", normal_balance="credit")
+    _, old = submit_sync_event(client_id="api_full", idempotency_key="old-card", nonce="old-card", payload={
+        "source_system": "client", "domain_event_type": "card_payment", "external_id": "old-card",
+        "source_object_type": "payment", "source_object_id": "1", "occurred_at": datetime(2026, 5, 2, tzinfo=timezone.utc),
+        "payload": {"accounting_entries": [{"account_code": "2100", "direction": "debit", "amount": "100.00"},
+                                           {"account_code": "2200", "direction": "credit", "amount": "100.00"}]}})
+    before = JournalEntry.objects.count()
+    payload = {"source_type": "bill", "source_reference": "BILL-SETTLE", "payment_date": date(2026, 5, 2),
+               "amount": Decimal("100.00"), "funding_account_code": "2200", "existing_sync_event_id": old["sync_event"]["id"]}
+    _, result = submit_payment_event(client_id="api_full", idempotency_key="link-card", nonce="link-card", payload=payload)
+    assert result["journal_entry"]["id"] == old["journal_entry"]["id"]
+    assert settlement_bill.outstanding_balance() == Decimal("0.00")
+    assert JournalEntry.objects.count() == before
+    with pytest.raises(ValidationError):
+        submit_payment_event(client_id="api_full", idempotency_key="link-again", nonce="link-again", payload=payload)
+    assert JournalEntry.objects.count() == before
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("problem", ["amount", "funding", "owner", "reversed"])
+def test_link_existing_event_rejects_mismatches_without_posting(api_ingestion_ready, settlement_bill, problem):
+    from django.core.exceptions import ValidationError
+    from apps.accounting.services.api_ingestion import submit_sync_event, submit_payment_event
+    from apps.accounting.services import reverse_journal_entry
+    Account.objects.create(entity=settlement_bill.entity, account_code="2200", name="Card", type="liability", normal_balance="credit")
+    _, old = submit_sync_event(client_id="api_full", idempotency_key="legacy-test", nonce="legacy-test", payload={
+        "source_system": "client", "domain_event_type": "card_payment", "external_id": "legacy-test",
+        "source_object_type": "payment", "source_object_id": "1", "occurred_at": datetime(2026, 5, 2, tzinfo=timezone.utc),
+        "payload": {"accounting_entries": [{"account_code": "2100", "direction": "debit", "amount": "100.00"},
+                                           {"account_code": "2200", "direction": "credit", "amount": "100.00"}]}})
+    payload = {"source_type": "bill", "source_reference": "BILL-SETTLE", "payment_date": date(2026, 5, 2),
+               "amount": Decimal("100.00"), "funding_account_code": "2200", "existing_sync_event_id": old["sync_event"]["id"]}
+    if problem == "amount":
+        payload["amount"] = Decimal("90.00")
+    elif problem == "funding":
+        payload["funding_account_code"] = "1000"
+    elif problem == "owner":
+        ApiRequestRecord.objects.filter(domain_object_type="SyncEventRecord").update(client_id="someone_else")
+    elif problem == "reversed":
+        reverse_journal_entry(entry=JournalEntry.objects.get(pk=old["journal_entry"]["id"]), reversal_date=date(2026, 5, 3), description="Correction")
+    before = JournalEntry.objects.count()
+    with pytest.raises(ValidationError):
+        submit_payment_event(client_id="api_full", idempotency_key="invalid-link", nonce="invalid-link", payload=payload)
+    assert settlement_bill.outstanding_balance() == Decimal("100.00")
+    assert not Payment.objects.filter(source_id=settlement_bill.pk).exists()
+    assert JournalEntry.objects.count() == before
+
+
+@pytest.mark.django_db
+def test_card_payment_closed_period_rolls_back(api_ingestion_ready, settlement_bill):
+    from django.core.exceptions import ValidationError
+    from apps.accounting.models import AccountingPeriod
+    from apps.accounting.services.periods import change_period_status
+    from apps.accounting.services.api_ingestion import submit_payment_event
+    Account.objects.create(entity=settlement_bill.entity, account_code="2200", name="Card", type="liability", normal_balance="credit")
+    change_period_status(period=AccountingPeriod.objects.get(entity=settlement_bill.entity), status="closed")
+    before = JournalEntry.objects.count()
+    with pytest.raises(ValidationError):
+        submit_payment_event(client_id="api_full", idempotency_key="closed-card", nonce="closed-card", payload={
+            "source_type": "bill", "source_reference": "BILL-SETTLE", "payment_date": date(2026, 5, 2),
+            "amount": Decimal("100.00"), "funding_account_code": "2200"})
+    assert settlement_bill.outstanding_balance() == Decimal("100.00")
+    assert JournalEntry.objects.count() == before
+    assert not Payment.objects.filter(source_id=settlement_bill.pk).exists()
+
+
+@pytest.mark.django_db
+def test_bill_balance_needs_review_after_linked_payment_reversal(api_client, api_ingestion_ready, settlement_bill):
+    from apps.accounting.services.api_ingestion import submit_payment_event
+    from apps.accounting.services import reverse_journal_entry
+    _, result = submit_payment_event(client_id="api_full", idempotency_key="reversed-payment", nonce="reversed-payment", payload={
+        "source_type": "bill", "source_reference": "BILL-SETTLE", "payment_date": date(2026, 5, 2), "amount": Decimal("100.00")})
+    reverse_journal_entry(entry=JournalEntry.objects.get(pk=result["journal_entry"]["id"]), reversal_date=date(2026, 5, 3), description="Correction")
+    response = api_client.get("/api/v1/bills/", {"external_bill_number": "BILL-SETTLE"}, **_signed_headers(
+        client_id="api_full", secret="full-secret", path="/api/v1/bills/", method="GET"))
+    assert response.data["results"][0]["payment_status"] == "needs_review"

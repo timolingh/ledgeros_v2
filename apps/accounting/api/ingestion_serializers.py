@@ -82,6 +82,17 @@ class ApiPaymentCreateSerializer(serializers.Serializer):
     source_reference = serializers.CharField(max_length=255)
     payment_date = serializers.DateField()
     amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    funding_account_code = serializers.CharField(max_length=32, required=False)
+    existing_sync_event_id = serializers.IntegerField(min_value=1, required=False)
+
+    def validate(self, attrs):
+        if attrs["amount"] <= 0:
+            raise serializers.ValidationError({"amount": "Amount must be positive."})
+        if attrs["source_type"] != "bill" and (
+            "funding_account_code" in attrs or "existing_sync_event_id" in attrs
+        ):
+            raise serializers.ValidationError("Funding selection and journal linking are supported only for bills.")
+        return attrs
 
 
 class ApiCreditCreateSerializer(serializers.Serializer):

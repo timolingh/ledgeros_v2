@@ -332,6 +332,11 @@ class PaymentApplication(models.Model):
         help_text="Bill being paid, if applicable.",
     )
     applied_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    journal_entry = models.OneToOneField(
+        "JournalEntry", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="payment_application",
+        help_text="Settlement journal; nullable for historical applications.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

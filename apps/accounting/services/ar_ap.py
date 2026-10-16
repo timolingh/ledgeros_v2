@@ -247,7 +247,7 @@ def apply_payment_to_invoice(
 
 @transaction.atomic
 def apply_payment_to_bill(
-    *, payment: Payment, bill: Bill, applied_amount: Decimal, user: User | None = None, source: str = "manual"
+    *, payment: Payment, bill: Bill, applied_amount: Decimal, user: User | None = None, source: str = "manual", existing_entry: JournalEntry | None = None
 ) -> tuple[PaymentApplication, JournalEntry]:
     """
     Apply a payment to a bill.
@@ -256,6 +256,15 @@ def apply_payment_to_bill(
     Updates bill status based on remaining balance.
     Returns the PaymentApplication and the journal entry.
     """
+    bill = Bill.objects.select_for_update().get(pk=bill.pk)
+    if bill.status not in {Bill.Status.POSTED, Bill.Status.PARTIALLY_PAID}:
+        raise ValidationError("Only posted, outstanding bills can receive payments.")
+    if applied_amount > bill.outstanding_balance():
+        raise ValidationError("Payment cannot exceed the bill outstanding balance.")
+    if payment.entity_id != bill.entity_id or payment.source_id != bill.pk:
+        raise ValidationError("Payment must belong to the same bill and entity.")
+    if payment.account.entity_id != bill.entity_id or not payment.account.is_active:
+        raise ValidationError("Funding account must be active and belong to the bill entity.")
     if payment.source_type != Payment.SourceType.BILL:
         raise ValidationError("Payment must be for a bill source type.")
 
@@ -271,32 +280,46 @@ def apply_payment_to_bill(
         raise ValidationError(f"Vendor {bill.vendor.vendor_code} has no default AP account configured.")
 
     # Create journal entry: Debit AP, Credit cash/bank
-    entry = create_and_post_journal_entry(
-        entry_date=payment.payment_date,
-        description=f"Payment for bill {bill.bill_number}",
-        lines=[
-            JournalLineInput(
-                account_code=ap_account.account_code,
-                side="debit",
-                amount=applied_amount,
-                description=f"AP reduction for bill {bill.bill_number}",
-            ),
-            JournalLineInput(
-                account_code=payment.account.account_code,
-                side="credit",
-                amount=applied_amount,
-                description=f"Cash payment for bill {bill.bill_number}",
-            ),
-        ],
-        created_by=user,
-        source=source,
-    )
+    if existing_entry is not None:
+        entry = JournalEntry.objects.select_for_update().get(pk=existing_entry.pk)
+        expected = sorted([
+            (ap_account.pk, "debit", applied_amount),
+            (payment.account_id, "credit", applied_amount),
+        ])
+        actual = sorted(entry.lines.values_list("account_id", "side", "amount"))
+        if (entry.entity_id != bill.entity_id or entry.status != JournalEntry.Status.POSTED
+                or entry.reversal_of_id or actual != expected):
+            raise ValidationError("Existing journal must be an unreversed, posted AP/funding settlement for the exact amount.")
+        if PaymentApplication.objects.filter(journal_entry=entry).exists():
+            raise ValidationError("This journal is already allocated to a payment application.")
+    else:
+        entry = create_and_post_journal_entry(
+            entry_date=payment.payment_date,
+            description=f"Payment for bill {bill.bill_number}",
+            lines=[
+                JournalLineInput(
+                    account_code=ap_account.account_code,
+                    side="debit",
+                    amount=applied_amount,
+                    description=f"AP reduction for bill {bill.bill_number}",
+                ),
+                JournalLineInput(
+                    account_code=payment.account.account_code,
+                    side="credit",
+                    amount=applied_amount,
+                    description=f"Cash payment for bill {bill.bill_number}",
+                ),
+            ],
+            created_by=user,
+            source=source,
+        )
 
     # Create payment application
     app = PaymentApplication.objects.create(
         payment=payment,
         bill=bill,
         applied_amount=applied_amount,
+        journal_entry=entry,
     )
 
     # Update bill status based on remaining balance
@@ -491,6 +514,7 @@ def issue_vendor_credit(
         payment=credit_payment,
         bill=bill,
         applied_amount=amount,
+        journal_entry=entry,
     )
 
     # Update bill status if fully credited
