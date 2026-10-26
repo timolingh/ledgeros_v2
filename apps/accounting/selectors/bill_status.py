@@ -40,6 +40,7 @@ def bill_payment_statuses(*, entity, client_id, references):
             payment_status = "unpaid"
         results.append({
             "id": bill.pk, "external_bill_number": bill.external_bill_number,
+            "supplier_invoice_number": bill.supplier_invoice_number,
             "status": bill.status, "payment_status": payment_status,
             "total_amount": str(bill.total_amount), "amount_paid": str(paid),
             "amount_credited": str(credited), "outstanding_balance": str(balance),
