@@ -193,6 +193,10 @@ class Bill(models.Model):
     entity = models.ForeignKey(Entity, on_delete=models.PROTECT, related_name="bills")
     vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name="bills")
     bill_number = models.CharField(max_length=64, help_text="Internal bill number, unique per entity.")
+    supplier_invoice_number = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Invoice reference supplied by the vendor; separate from the integration identity.",
+    )
     external_bill_number = models.CharField(
         max_length=255,
         blank=True,

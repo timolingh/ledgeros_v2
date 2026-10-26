@@ -532,3 +532,27 @@ bill settled by card leaves AP at zero, raises card liability by 100.00, leaves
 Cash unchanged, and produces one application and one settlement journal across
 retries. A 40.00 payment plus 10.00 vendor credit leaves 50.00 outstanding.
 Legacy reconciliation must leave journal count and GL balances unchanged.
+
+
+### Supplier invoice references on bills
+
+`Bill.supplier_invoice_number` stores the vendor's invoice reference separately
+from the internal bill number and client-scoped `external_bill_number` integration
+identity. `POST /api/v1/bills/` accepts the optional string (maximum 255 characters,
+blank allowed); its bill response and scoped `GET /api/v1/bills/` results expose it.
+The field is not a global unique identifier and adds no duplicate-invoice blocking.
+
+Migration `0012_bill_supplier_invoice_number` leaves historical bills blank and
+does not repost or backfill financial data. Deploy LedgerOS and apply the migration
+before clients send the new field. Older clients can omit it. Omitted fields are
+not injected into validated request data, preserving existing idempotency hashes;
+historical saved response replays remain unchanged and may omit the new field.
+Changing a supplied reference under the same idempotency key is rejected.
+
+This metadata does not change bill journals (debit expense / credit AP), balances,
+payment applications, or report totals. Tests in `test_supplier_invoice_number.py`
+cover create/read, exact replay, changed-payload rejection, optional values, length
+validation, and unchanged journal effects. In a prepared sandbox, submit a 120.00
+bill with a supplier reference, read it by external reference, and replay the same
+request: one bill and one 120.00 expense/AP journal must remain. Historical reference
+backfill and duplicate-invoice policy are deferred.

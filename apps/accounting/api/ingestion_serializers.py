@@ -62,6 +62,8 @@ class ApiInvoiceCreateSerializer(_ApiDocumentBaseSerializer):
 class ApiBillCreateSerializer(_ApiDocumentBaseSerializer):
     vendor_code = serializers.CharField(max_length=64)
     external_bill_number = serializers.CharField(max_length=255)
+    # No serializer default: omitted fields must preserve historical request hashes.
+    supplier_invoice_number = serializers.CharField(max_length=255, required=False, allow_blank=True)
     bill_date = serializers.DateField()
     due_date = serializers.DateField()
     total_amount = serializers.DecimalField(max_digits=14, decimal_places=2)
