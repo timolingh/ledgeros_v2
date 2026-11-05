@@ -45,6 +45,7 @@ from apps.accounting.services.api_ingestion import (
     submit_bank_withdrawal_event,
     submit_bill_event,
     submit_customer_event,
+    provision_customer_event,
     submit_credit_event,
     submit_invoice_event,
     submit_payment_event,
@@ -157,6 +158,11 @@ class CustomerUpsertView(ApiSubmissionView):
     required_scope = "customers"
     event_type = "customer.upsert_requested"
     service_func = staticmethod(submit_customer_event)
+
+
+class CustomerProvisionView(CustomerUpsertView):
+    # Strict provisioning is a subset of the existing customer-write permission.
+    service_func = staticmethod(provision_customer_event)
 
 
 class VendorUpsertView(ApiSubmissionView):

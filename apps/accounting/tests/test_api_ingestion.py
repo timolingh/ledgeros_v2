@@ -883,3 +883,72 @@ def test_bill_balance_needs_review_after_linked_payment_reversal(api_client, api
     response = api_client.get("/api/v1/bills/", {"external_bill_number": "BILL-SETTLE"}, **_signed_headers(
         client_id="api_full", secret="full-secret", path="/api/v1/bills/", method="GET"))
     assert response.data["results"][0]["payment_status"] == "needs_review"
+
+
+@pytest.mark.django_db
+def test_strict_customer_provisioning_creates_and_replays_without_journals(api_client, api_ingestion_ready):
+    path = "/api/v1/customers/provision/"
+    payload = {"customer_code": "PROVISION-001", "name": "New customer", "default_ar_account_code": "1100"}
+    before = (JournalEntry.objects.count(), Invoice.objects.count(), Payment.objects.count())
+    def post(key):
+        return api_client.post(path, payload, format="json", **_signed_headers(
+            client_id="api_full", secret=api_ingestion_ready["clients"]["api_full"],
+            path=path, payload=payload, idempotency_key=key,
+        ))
+    first, replay, match = post("provision-001"), post("provision-001"), post("provision-002")
+    assert first.status_code == replay.status_code == 201
+    assert match.status_code == 200
+    assert first.data == replay.data == match.data
+    assert Customer.objects.filter(customer_code="PROVISION-001").count() == 1
+    assert (JournalEntry.objects.count(), Invoice.objects.count(), Payment.objects.count()) == before
+    # Replaying the same operation must expose later drift, not overwrite or hide it.
+    customer = Customer.objects.get(customer_code="PROVISION-001")
+    customer.name = "Changed externally"
+    customer.save()
+    conflict = post("provision-001")
+    assert conflict.status_code == 400
+    customer.refresh_from_db()
+    assert customer.name == "Changed externally"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("field,value", [("name", "Different name"), ("default_ar_account_code", "1000"), ("status", "inactive")])
+def test_strict_customer_provisioning_rejects_conflicts(api_client, api_ingestion_ready, field, value):
+    path = "/api/v1/customers/provision/"
+    customer = api_ingestion_ready["customer"]
+    before = (customer.name, customer.default_ar_account_id, customer.status, customer.updated_at,
+              JournalEntry.objects.count(), ApiRequestRecord.objects.count())
+    payload = {"customer_code": customer.customer_code, "name": customer.name, "default_ar_account_code": "1100", field: value}
+    response = api_client.post(path, payload, format="json", **_signed_headers(
+        client_id="api_full", secret=api_ingestion_ready["clients"]["api_full"],
+        path=path, payload=payload, idempotency_key=f"conflict-{field}",
+    ))
+    assert response.status_code == 400
+    assert "No customer changes were made" in str(response.data)
+    customer.refresh_from_db()
+    assert (customer.name, customer.default_ar_account_id, customer.status, customer.updated_at,
+            JournalEntry.objects.count(), ApiRequestRecord.objects.count()) == before
+
+
+@pytest.mark.django_db
+def test_strict_customer_provisioning_requires_customer_write_permission(api_client, api_ingestion_ready):
+    path = "/api/v1/customers/provision/"
+    payload = {"customer_code": "DENIED-CUSTOMER", "name": "Denied", "default_ar_account_code": "1100"}
+    response = api_client.post(path, payload, format="json", **_signed_headers(
+        client_id="api_invoice_only", secret=api_ingestion_ready["clients"]["api_invoice_only"],
+        path=path, payload=payload, idempotency_key="denied-provision",
+    ))
+    assert response.status_code == 403
+    assert not Customer.objects.filter(customer_code="DENIED-CUSTOMER").exists()
+
+
+@pytest.mark.django_db
+def test_strict_customer_provisioning_requires_ar_account(api_client, api_ingestion_ready):
+    path = "/api/v1/customers/provision/"
+    payload = {"customer_code": "NO-AR", "name": "Missing AR"}
+    response = api_client.post(path, payload, format="json", **_signed_headers(
+        client_id="api_full", secret=api_ingestion_ready["clients"]["api_full"],
+        path=path, payload=payload, idempotency_key="missing-ar",
+    ))
+    assert response.status_code == 400
+    assert not Customer.objects.filter(customer_code="NO-AR").exists()
