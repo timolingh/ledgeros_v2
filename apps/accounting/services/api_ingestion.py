@@ -454,6 +454,49 @@ def submit_customer_event(*, client_id: str, idempotency_key: str, nonce: str, p
 
 
 @transaction.atomic
+def provision_customer_event(*, client_id: str, idempotency_key: str, nonce: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """Create a missing customer or verify a match; never update an existing one."""
+    entity = get_default_entity()
+    account = payload.get("default_ar_account")
+    if account is None:
+        raise ValidationError({"default_ar_account_code": "A default AR account is required for provisioning."})
+    code = payload["customer_code"]
+    expected = {"name": payload["name"], "status": payload.get("status", Customer.Status.ACTIVE),
+                "default_ar_account_id": account.pk}
+
+    def verify(customer):
+        conflicts = [field for field, value in expected.items() if getattr(customer, field) != value]
+        if conflicts:
+            raise ValidationError({"customer_code": (
+                f"Existing LedgerOS customer {code} conflicts in: {', '.join(conflicts)}. "
+                "No customer changes were made. Review the mapping with an administrator."
+            )})
+
+    # Recheck even on replay: a cached response must not hide changed customer data.
+    existing = Customer.objects.select_for_update().filter(entity=entity, customer_code=code).first()
+    if existing is not None:
+        verify(existing)
+
+    def create_response():
+        customer, created = Customer.objects.select_for_update().get_or_create(
+            entity=entity, customer_code=code, defaults=expected,
+        )
+        verify(customer)
+        customer.full_clean()
+        return (201 if created else 200, _build_customer_payload(customer, client_id=client_id),
+                "Customer", customer.id, None)
+
+    result = _submit_api_request(
+        entity=entity, client_id=client_id, event_type="customer.provision_requested",
+        idempotency_key=idempotency_key, nonce=nonce, request_payload=payload,
+        create_response=create_response,
+    )
+    if not Customer.objects.filter(entity=entity, customer_code=code).exists():
+        raise ValidationError({"customer_code": "Previously provisioned customer is missing. Administrator review is required."})
+    return result
+
+
+@transaction.atomic
 def submit_vendor_event(*, client_id: str, idempotency_key: str, nonce: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     entity = get_default_entity()
     vendor_code = payload["vendor_code"]

@@ -556,3 +556,19 @@ validation, and unchanged journal effects. In a prepared sandbox, submit a 120.0
 bill with a supplier reference, read it by external reference, and replay the same
 request: one bill and one 120.00 expense/AP journal must remain. Historical reference
 backfill and duplicate-invoice policy are deferred.
+
+
+### Strict customer provisioning
+
+`POST /api/v1/customers/provision/` accepts the customer-upsert payload but requires
+a default AR account. It uses the existing `customers` scope and
+`customer.upsert_requested` authorization; its request/audit identity is
+`customer.provision_requested`. It creates a missing customer (201), verifies an
+existing exact code/name/status/AR match without updating it (200), or returns
+400 on conflict without changing the customer. It creates no invoice, payment,
+or journal. Existing `/customers/` upsert behavior is unchanged.
+
+Retries preserve the original response and identity, but recheck current
+customer data before replay so later conflicts cannot be hidden. No migration
+is needed. Deploy this endpoint before clients enable explicit provisioning;
+clients must not fall back to upsert when the endpoint is unavailable.
